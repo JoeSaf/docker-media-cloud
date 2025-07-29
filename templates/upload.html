@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+
+{% block title %}Upload - Media Manager{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card shadow">
+            <div class="card-header">
+                <h3 class="card-title mb-0">
+                    <i class="bi bi-cloud-upload"></i> Upload Media Files
+                </h3>
+            </div>
+            <div class="card-body">
+                <form method="POST" enctype="multipart/form-data" id="uploadForm">
+                    <!-- File Type Filter -->
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="file_type" class="form-label">File Type Filter (Optional)</label>
+                            <select class="form-select" id="file_type" name="file_type" onchange="updateFolderOptions()">
+                                <option value="">Any Type</option>
+                                <option value="image">Images Only</option>
+                                <option value="video">Videos Only</option>
+                                <option value="audio">Audio Only</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="folder_option" class="form-label">Folder</label>
+                            <select class="form-select" id="folder_option" onchange="toggleCustomFolder()">
+                                <option value="root">Root Directory</option>
+                                <option value="existing">Existing Folder</option>
+                                <option value="new">Create New Folder</option>
+                                <option value="nested">Create Nested Folder</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Existing Folder Selection -->
+                    <div class="row mb-3" id="existingFolderRow" style="display: none;">
+                        <div class="col-12">
+                            <label for="existing_folder" class="form-label">Select Existing Folder</label>
+                            <select class="form-select" id="existing_folder">
+                                <option value="">Choose folder...</option>
+                            </select>
+                            <div class="form-text">Select from existing folders (shows nested structure)</div>
+                        </div>
+                    </div>
+
+                    <!-- Custom Folder Input -->
+                    <div class="row mb-3" id="customFolderRow" style="display: none;">
+                        <div class="col-12">
+                            <label for="custom_folder" class="form-label">New Folder Name</label>
+                            <input type="text" class="form-control" id="custom_folder" name="custom_folder" 
+                                   placeholder="e.g., Action Movies, Family Photos, Jazz Music">
+                            <div class="form-text">Letters, numbers, spaces, hyphens, and underscores only</div>
+                        </div>
+                    </div>
+
+                    <!-- Nested Folder Input -->
+                    <div class="row mb-3" id="nestedFolderRow" style="display: none;">
+                        <div class="col-12">
+                            <label for="nested_folder" class="form-label">Nested Folder Path</label>
+                            <input type="text" class="form-control" id="nested_folder" name="custom_folder" 
+                                   placeholder="e.g., Anime/CowboyBebop, Movies/Action/2023, Music/Jazz/Miles Davis">
+                            <div class="form-text">
+                                Use forward slashes (/) to create nested folders.<br>
+                                Example: "Anime/CowboyBebop" creates Anime folder with CowboyBebop subfolder
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="upload-zone" id="uploadZone">
+                        <i class="bi bi-cloud-upload fs-1 text-muted"></i>
+                        <h4>Drag & Drop Files Here</h4>
+                        <p class="text-muted">or click to browse</p>
+                        <input type="file" name="files" id="fileInput" multiple class="d-none" 
+                               accept="image/*,video/*,audio/*">
+                        <button type="button" class="btn btn-outline-primary" onclick="document.getElementById('fileInput').click()">
+                            Browse Files
+                        </button>
+                    </div>
+                    
+                    <div id="fileList" class="mt-3" style="display: none;">
+                        <h5>Selected Files:</h5>
+                        <div id="selectedFiles"></div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-primary" id="uploadBtn" disabled>
+                            <i class="bi bi-upload"></i> Upload Files
+                        </button>
+                        <a href="{{ url_for('gallery') }}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Back to Gallery
+                        </a>
+                    </div>
+                    
+                    <div class="progress mt-3" id="uploadProgress" style="display: none;">
+                        <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                </form>
+                
+                <div class="mt-4">
+                    <h5>Supported File Types:</h5>
+                    <div class="row">
+                        <div class="col-md-4">
+                            <strong>Images:</strong><br>
+                            <small class="text-muted">JPG, PNG, GIF, BMP, WebP</small>
+                        </div>
+                        <div class="col-md-4">
+                            <strong>Videos:</strong><br>
+                            <small class="text-muted">MP4, AVI, MKV, MOV, WebM</small>
+                        </div>
+                        <div class="col-md-4">
+                            <strong>Audio:</strong><br>
+                            <small class="text-muted">MP3, WAV, FLAC, AAC, OGG</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Existing Folders Display -->
+                <div class="mt-4">
+                    <h5>Existing Folder Structure:</h5>
+                    <div class="row">
+                        {% for file_type, folders in folder_structure.items() %}
+                        {% if folders %}
+                        <div class="col-md-4">
+                            <strong>{{ file_type.title() }}:</strong>
+                            <ul class="list-unstyled ms-3">
+                                {% for folder in folders %}
+                                <li style="margin-left: {{ folder.depth * 20 }}px;">
+                                    <i class="bi bi-folder"></i> 
+                                    {{ folder.name }}
+                                    {% if folder.depth > 0 %}
+                                        <small class="text-muted">({{ folder.display_name }})</small>
+                                    {% endif %}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Store folder structure data
+const folderStructure = {{ folder_structure|tojson }};
+
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const selectedFiles = document.getElementById('selectedFiles');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadForm = document.getElementById('uploadForm');
+    const uploadProgress = document.getElementById('uploadProgress');
+    
+    // Drag and drop functionality
+    uploadZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        uploadZone.classList.add('dragover');
+    });
+    
+    uploadZone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+    });
+    
+    uploadZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        handleFiles(files);
+    });
+    
+    uploadZone.addEventListener('click', function() {
+        fileInput.click();
+    });
+    
+    fileInput.addEventListener('change', function() {
+        handleFiles(this.files);
+    });
+    
+    function handleFiles(files) {
+        if (files.length === 0) return;
+        
+        fileInput.files = files;
+        selectedFiles.innerHTML = '';
+        
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const fileItem = document.createElement('div');
+            fileItem.className = 'card mb-2';
+            fileItem.innerHTML = `
+                <div class="card-body py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>${file.name}</strong>
+                            <small class="text-muted">(${formatFileSize(file.size)})</small>
+                        </div>
+                        <span class="badge bg-primary">${getFileType(file.name)}</span>
+                    </div>
+                </div>
+            `;
+            selectedFiles.appendChild(fileItem);
+        }
+        
+        fileList.style.display = 'block';
+        uploadBtn.disabled = false;
+    }
+    
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    function getFileType(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
+        const videoExts = ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm', 'm4v'];
+        const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma'];
+        
+        if (imageExts.includes(ext)) return 'Image';
+        if (videoExts.includes(ext)) return 'Video';
+        if (audioExts.includes(ext)) return 'Audio';
+        return 'Unknown';
+    }
+    
+    // Upload with progress
+    uploadForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        // Set the custom folder value based on selection
+        const folderOption = document.getElementById('folder_option').value;
+        const customFolderInput = document.getElementById('custom_folder');
+        const nestedFolderInput = document.getElementById('nested_folder');
+        
+        if (folderOption === 'existing') {
+            const existingFolder = document.getElementById('existing_folder').value;
+            customFolderInput.value = existingFolder;
+        } else if (folderOption === 'root') {
+            customFolderInput.value = '';
+        } else if (folderOption === 'nested') {
+            customFolderInput.value = nestedFolderInput.value;
+        }
+        // For 'new', the value is already in the input
+        
+        const formData = new FormData(uploadForm);
+        uploadProgress.style.display = 'block';
+        uploadBtn.disabled = true;
+        
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                const progressBar = uploadProgress.querySelector('.progress-bar');
+                progressBar.style.width = percentComplete + '%';
+                progressBar.textContent = Math.round(percentComplete) + '%';
+            }
+        });
+        
+        xhr.addEventListener('load', function() {
+            if (xhr.status === 200) {
+                window.location.href = "{{ url_for('gallery') }}";
+            } else {
+                alert('Upload failed. Please try again.');
+                uploadBtn.disabled = false;
+                uploadProgress.style.display = 'none';
+            }
+        });
+        
+        xhr.addEventListener('error', function() {
+            alert('Upload failed. Please try again.');
+            uploadBtn.disabled = false;
+            uploadProgress.style.display = 'none';
+        });
+        
+        xhr.open('POST', uploadForm.action);
+        xhr.send(formData);
+    });
+});
+
+function updateFolderOptions() {
+    const fileType = document.getElementById('file_type').value;
+    const existingFolderSelect = document.getElementById('existing_folder');
+    
+    // Clear existing options
+    existingFolderSelect.innerHTML = '<option value="">Choose folder...</option>';
+    
+    if (fileType && folderStructure[fileType]) {
+        folderStructure[fileType].forEach(folder => {
+            const option = document.createElement('option');
+            option.value = folder.path;
+            option.textContent = folder.display_name;
+            
+            // Add indentation for nested folders
+            if (folder.depth > 0) {
+                option.style.paddingLeft = (folder.depth * 20) + 'px';
+            }
+            
+            existingFolderSelect.appendChild(option);
+        });
+    } else if (!fileType) {
+        // Show all folders from all types
+        ['image', 'video', 'audio'].forEach(type => {
+            if (folderStructure[type]) {
+                folderStructure[type].forEach(folder => {
+                    const option = document.createElement('option');
+                    option.value = folder.path;
+                    option.textContent = `${folder.display_name} (${type})`;
+                    
+                    if (folder.depth > 0) {
+                        option.style.paddingLeft = (folder.depth * 20) + 'px';
+                    }
+                    
+                    existingFolderSelect.appendChild(option);
+                });
+            }
+        });
+    }
+}
+
+function toggleCustomFolder() {
+    const folderOption = document.getElementById('folder_option').value;
+    const existingFolderRow = document.getElementById('existingFolderRow');
+    const customFolderRow = document.getElementById('customFolderRow');
+    const nestedFolderRow = document.getElementById('nestedFolderRow');
+    
+    // Hide all rows first
+    existingFolderRow.style.display = 'none';
+    customFolderRow.style.display = 'none';
+    nestedFolderRow.style.display = 'none';
+    
+    if (folderOption === 'existing') {
+        existingFolderRow.style.display = 'block';
+        updateFolderOptions();
+    } else if (folderOption === 'new') {
+        customFolderRow.style.display = 'block';
+    } else if (folderOption === 'nested') {
+        nestedFolderRow.style.display = 'block';
+    }
+}
+</script>
+{% endblock %}

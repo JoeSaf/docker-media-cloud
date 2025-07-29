@@ -1,0 +1,697 @@
+{% extends "base.html" %}
+
+{% block title %}Gallery - Media Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-grid"></i> Media Gallery</h2>
+    <div class="btn-group">
+        <a href="{{ url_for('upload') }}" class="btn btn-primary">
+            <i class="bi bi-plus"></i> Upload
+        </a>
+        <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#createFolderModal">
+            <i class="bi bi-folder-plus"></i> New Folder
+        </button>
+        <button class="btn btn-outline-info" id="selectModeBtn" onclick="toggleSelectMode()">
+            <i class="bi bi-check-square"></i> Select Files
+        </button>
+    </div>
+</div>
+
+<!-- Bulk Actions Bar (hidden by default) -->
+<div id="bulkActionsBar" class="alert alert-info d-none">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <strong id="selectedCount">0</strong> file(s) selected
+            <button class="btn btn-sm btn-outline-primary ms-2" onclick="selectAll()">Select All</button>
+            <button class="btn btn-sm btn-outline-secondary ms-1" onclick="clearSelection()">Clear Selection</button>
+        </div>
+        <div>
+            <button class="btn btn-sm btn-success" onclick="showMoveDialog()" id="moveSelectedBtn" disabled>
+                <i class="bi bi-arrow-right"></i> Move Selected
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="toggleSelectMode()">
+                <i class="bi bi-x"></i> Cancel
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Filters and Sorting -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <label class="form-label">Filter by Type:</label>
+        <select class="form-select" id="typeFilter" onchange="applyFilters()">
+            <option value="">All Types</option>
+            <option value="image" {% if current_type == 'image' %}selected{% endif %}>Images</option>
+            <option value="video" {% if current_type == 'video' %}selected{% endif %}>Videos</option>
+            <option value="audio" {% if current_type == 'audio' %}selected{% endif %}>Audio</option>
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Filter by Folder:</label>
+        <select class="form-select" id="folderFilter" onchange="applyFilters()">
+            <option value="">All Folders</option>
+            <!-- Flatten folder structure in template -->
+            {% for file_type, folder_tree in folder_structure.items() %}
+                {% if folder_tree %}
+                    {% set flat_folders = [] %}
+                    {% for folder in folder_tree %}
+                        {% if flat_folders.append({
+                            'path': folder.path,
+                            'display_name': folder.path.replace('/', ' → '),
+                            'depth': folder.depth
+                        }) %}{% endif %}
+                        {% if folder.children %}
+                            {% for child in folder.children %}
+                                {% if flat_folders.append({
+                                    'path': child.path,
+                                    'display_name': child.path.replace('/', ' → '),
+                                    'depth': child.depth
+                                }) %}{% endif %}
+                                {% if child.children %}
+                                    {% for grandchild in child.children %}
+                                        {% if flat_folders.append({
+                                            'path': grandchild.path,
+                                            'display_name': grandchild.path.replace('/', ' → '),
+                                            'depth': grandchild.depth
+                                        }) %}{% endif %}
+                                    {% endfor %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+                    {% endfor %}
+                    {% for folder in flat_folders %}
+                        <option value="{{ folder.path }}" {% if current_folder == folder.path %}selected{% endif %}>
+                            {% for i in range(folder.depth) %}&nbsp;&nbsp;&nbsp;&nbsp;{% endfor %}{{ folder.display_name }} ({{ file_type }})
+                        </option>
+                    {% endfor %}
+                {% endif %}
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Sort by:</label>
+        <select class="form-select" id="sortFilter" onchange="applyFilters()">
+            <option value="name" {% if sort_by == 'name' %}selected{% endif %}>Name</option>
+            <option value="date" {% if sort_by == 'date' %}selected{% endif %}>Date</option>
+            <option value="size" {% if sort_by == 'size' %}selected{% endif %}>Size</option>
+            <option value="folder" {% if sort_by == 'folder' %}selected{% endif %}>Folder</option>
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">&nbsp;</label>
+        <div class="d-grid">
+            <button class="btn btn-outline-primary" onclick="clearFilters()">
+                <i class="bi bi-x-circle"></i> Clear Filters
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Current Filter Display -->
+{% if current_folder or current_type %}
+<div class="alert alert-info">
+    <i class="bi bi-funnel"></i> 
+    Active filters: 
+    {% if current_type %}Type: <strong>{{ current_type.title() }}</strong>{% endif %}
+    {% if current_folder %}
+        {% if current_type %}, {% endif %}
+        Folder: <strong>{{ current_folder.replace('/', ' → ') }}</strong>
+    {% endif %}
+    <a href="{{ url_for('gallery') }}" class="ms-2 text-decoration-none">Clear all</a>
+</div>
+{% endif %}
+
+<!-- Folder Navigation Breadcrumbs -->
+{% if current_folder %}
+<nav aria-label="folder-breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item">
+            <a href="{{ url_for('gallery', type=current_type) if current_type else url_for('gallery') }}">
+                <i class="bi bi-house"></i> Root
+            </a>
+        </li>
+        {% set folder_parts = current_folder.split('/') %}
+        {% for i in range(folder_parts|length) %}
+            {% set partial_path = folder_parts[:i+1]|join('/') %}
+            {% if loop.last %}
+                <li class="breadcrumb-item active" aria-current="page">{{ folder_parts[i] }}</li>
+            {% else %}
+                <li class="breadcrumb-item">
+                    <a href="{{ url_for('gallery', folder=partial_path, type=current_type) if current_type else url_for('gallery', folder=partial_path) }}">
+                        {{ folder_parts[i] }}
+                    </a>
+                </li>
+            {% endif %}
+        {% endfor %}
+    </ol>
+</nav>
+{% endif %}
+
+<!-- File Count -->
+<div class="mb-3">
+    <small class="text-muted">
+        {% if files %}
+            Showing {{ files|length }} file(s)
+            {% if current_folder %}in {{ current_folder.replace('/', ' → ') }}{% endif %}
+        {% else %}
+            No files found
+        {% endif %}
+    </small>
+</div>
+
+{% if files %}
+<div class="row">
+    {% for file in files %}
+    <div class="col-lg-3 col-md-4 col-sm-6 mb-4">
+        <div class="card h-100 shadow-sm file-card" data-file-path="{{ file.relative_path }}" data-file-type="{{ file.type }}">
+            <!-- Selection checkbox (hidden by default) -->
+            <div class="position-absolute top-0 start-0 p-2 selection-checkbox" style="display: none; z-index: 10;">
+                <input type="checkbox" class="form-check-input file-checkbox" data-file-path="{{ file.relative_path }}">
+            </div>
+            
+            <div class="thumbnail-container">
+                {% if file.thumbnail %}
+                    <img src="{{ url_for('thumbnail', filename=file.thumbnail) }}" 
+                         class="thumbnail file-preview" alt="{{ file.filename }}"
+                         data-bs-toggle="modal" data-bs-target="#mediaModal"
+                         data-filename="{{ file.filename }}" 
+                         data-relative-path="{{ file.relative_path }}"
+                         data-type="{{ file.type }}"
+                         style="cursor: pointer;">
+                {% else %}
+                    <div class="thumbnail d-flex align-items-center justify-content-center bg-light file-preview"
+                         data-bs-toggle="modal" data-bs-target="#mediaModal"
+                         data-filename="{{ file.filename }}" 
+                         data-relative-path="{{ file.relative_path }}"
+                         data-type="{{ file.type }}"
+                         style="cursor: pointer;">
+                        {% if file.type == 'audio' %}
+                            <i class="bi bi-music-note fs-1 text-muted"></i>
+                        {% elif file.type == 'video' %}
+                            <i class="bi bi-play-circle fs-1 text-muted"></i>
+                        {% else %}
+                            <i class="bi bi-file-earmark fs-1 text-muted"></i>
+                        {% endif %}
+                    </div>
+                {% endif %}
+                <div class="file-overlay">
+                    <div class="fw-bold">{{ file.filename[:20] }}{% if file.filename|length > 20 %}...{% endif %}</div>
+                    <small>
+                        {{ file.size|filesize }} • {{ file.type.title() }}
+                        {% if file.folder %}
+                            <br>📁 {{ file.folder.replace('/', ' → ') }}
+                        {% endif %}
+                    </small>
+                </div>
+            </div>
+            <div class="card-body p-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">{{ file.modified.strftime('%Y-%m-%d %H:%M') }}</small>
+                    <div class="btn-group btn-group-sm file-actions">
+                        <button class="btn btn-outline-primary btn-sm" 
+                                data-bs-toggle="modal" data-bs-target="#mediaModal"
+                                data-filename="{{ file.filename }}" 
+                                data-relative-path="{{ file.relative_path }}"
+                                data-type="{{ file.type }}">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <button class="btn btn-outline-success btn-sm" 
+                                onclick="showSingleMoveDialog('{{ file.relative_path }}', '{{ file.filename }}')"
+                                title="Move file">
+                            <i class="bi bi-arrow-right"></i>
+                        </button>
+                        {% if current_user.is_admin %}
+                        <button class="btn btn-outline-danger btn-sm" 
+                                onclick="deleteFile('{{ file.relative_path }}')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-images fs-1 text-muted"></i>
+    <h3 class="text-muted">No media files found</h3>
+    {% if current_folder or current_type %}
+    <p class="text-muted">Try adjusting your filters or <a href="{{ url_for('gallery') }}">view all files</a></p>
+    {% else %}
+    <p class="text-muted">Upload some files to get started!</p>
+    {% endif %}
+    <a href="{{ url_for('upload') }}" class="btn btn-primary">
+        <i class="bi bi-plus"></i> Upload Files
+    </a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block modals %}
+<!-- Media Modal -->
+<div class="modal fade" id="mediaModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="mediaModalTitle">Media Viewer</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center" id="mediaModalBody">
+                <!-- Media content will be loaded here -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Folder Modal -->
+<div class="modal fade" id="createFolderModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create New Folder</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('create_folder') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="folder_path" class="form-label">Folder Path</label>
+                        <input type="text" class="form-control" id="folder_path" name="folder_path" 
+                               placeholder="e.g., Action Movies, Anime/CowboyBebop, Music/Jazz/Miles Davis" required>
+                        <div class="form-text">
+                            Use forward slashes (/) to create nested folders.<br>
+                            Example: "Anime/CowboyBebop" creates Anime folder with CowboyBebop subfolder
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="file_type" class="form-label">Media Type</label>
+                        <select class="form-select" id="file_type" name="file_type" required>
+                            <option value="">Choose type...</option>
+                            <option value="image">Images</option>
+                            <option value="video">Videos</option>
+                            <option value="audio">Audio</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Quick Folder Templates -->
+                    <div class="mb-3">
+                        <label class="form-label">Quick Templates (Optional)</label>
+                        <div class="btn-group-vertical d-grid gap-1">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setTemplate('Anime')">
+                                📺 Anime Folder
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setTemplate('Movies/Action')">
+                                🎬 Action Movies
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setTemplate('TV Shows')">
+                                📺 TV Shows
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setTemplate('Music/Rock')">
+                                🎵 Rock Music
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Folder</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Move Files Modal -->
+<div class="modal fade" id="moveFilesModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Move Files</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Files to move:</label>
+                    <div id="filesToMove" class="border rounded p-2 bg-light">
+                        <!-- Selected files will be listed here -->
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <label for="destinationType" class="form-label">Destination Type</label>
+                        <select class="form-select" id="destinationType" onchange="loadDestinationFolders()">
+                            <option value="">Choose type...</option>
+                            <option value="image">Images</option>
+                            <option value="video">Videos</option>
+                            <option value="audio">Audio</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="destinationFolder" class="form-label">Destination Folder</label>
+                        <select class="form-select" id="destinationFolder">
+                            <option value="">Root folder</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <label class="form-label">Or create new folder:</label>
+                    <input type="text" class="form-control" id="newDestinationFolder" 
+                           placeholder="e.g., NewFolder, Movies/Action, Anime/NewSeries">
+                    <div class="form-text">Use forward slashes (/) to create nested folders</div>
+                </div>
+                
+                <div class="mt-3">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Note:</strong> Files can only be moved within the same media type (images, videos, or audio).
+                        If filename conflicts occur, files will be automatically renamed.
+                    </div>
+                </div>
+                
+                <div id="moveProgress" class="mt-3" style="display: none;">
+                    <div class="progress">
+                        <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <small class="text-muted">Moving files...</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmMoveBtn" onclick="executeMove()">
+                    <i class="bi bi-arrow-right"></i> Move Files
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete <strong id="deleteFileName"></strong>?</p>
+                <p class="text-muted small">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form method="POST" id="deleteForm" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let selectMode = false;
+let selectedFiles = new Set();
+let filesToMove = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    const mediaModal = document.getElementById('mediaModal');
+    const mediaModalTitle = document.getElementById('mediaModalTitle');
+    const mediaModalBody = document.getElementById('mediaModalBody');
+    
+    mediaModal.addEventListener('show.bs.modal', function(event) {
+        const button = event.relatedTarget;
+        const filename = button.getAttribute('data-filename');
+        const relativePath = button.getAttribute('data-relative-path') || filename;
+        const type = button.getAttribute('data-type');
+        
+        mediaModalTitle.textContent = filename;
+        
+        let content = '';
+        const streamUrl = "{{ url_for('stream_file', filename='FILENAME') }}".replace('FILENAME', encodeURIComponent(relativePath));
+        
+        if (type === 'image') {
+            content = `<img src="${streamUrl}" class="img-fluid media-player" alt="${filename}">`;
+        } else if (type === 'video') {
+            content = `
+                <video class="media-player" controls>
+                    <source src="${streamUrl}" type="video/mp4">
+                    Your browser does not support the video tag.
+                </video>
+            `;
+        } else if (type === 'audio') {
+            content = `
+                <div class="p-4">
+                    <i class="bi bi-music-note fs-1 text-primary mb-3"></i>
+                    <h4>${filename}</h4>
+                    <audio class="w-100" controls>
+                        <source src="${streamUrl}" type="audio/mpeg">
+                        Your browser does not support the audio element.
+                    </audio>
+                </div>
+            `;
+        }
+        
+        mediaModalBody.innerHTML = content;
+    });
+    
+    // Handle file selection in select mode
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('file-checkbox')) {
+            updateSelection();
+        }
+    });
+    
+    // Prevent modal from opening when in select mode and clicking on preview
+    document.addEventListener('click', function(e) {
+        if (selectMode && e.target.classList.contains('file-preview')) {
+            e.preventDefault();
+            e.stopPropagation();
+            // Toggle checkbox instead
+            const card = e.target.closest('.file-card');
+            const checkbox = card.querySelector('.file-checkbox');
+            checkbox.checked = !checkbox.checked;
+            updateSelection();
+        }
+    });
+});
+
+function toggleSelectMode() {
+    selectMode = !selectMode;
+    const selectModeBtn = document.getElementById('selectModeBtn');
+    const bulkActionsBar = document.getElementById('bulkActionsBar');
+    const selectionCheckboxes = document.querySelectorAll('.selection-checkbox');
+    const fileActions = document.querySelectorAll('.file-actions');
+    
+    if (selectMode) {
+        selectModeBtn.innerHTML = '<i class="bi bi-x-square"></i> Exit Select';
+        selectModeBtn.classList.remove('btn-outline-info');
+        selectModeBtn.classList.add('btn-warning');
+        bulkActionsBar.classList.remove('d-none');
+        
+        selectionCheckboxes.forEach(cb => cb.style.display = 'block');
+        fileActions.forEach(fa => fa.style.display = 'none');
+    } else {
+        selectModeBtn.innerHTML = '<i class="bi bi-check-square"></i> Select Files';
+        selectModeBtn.classList.remove('btn-warning');
+        selectModeBtn.classList.add('btn-outline-info');
+        bulkActionsBar.classList.add('d-none');
+        
+        selectionCheckboxes.forEach(cb => cb.style.display = 'none');
+        fileActions.forEach(fa => fa.style.display = 'block');
+        
+        // Clear all selections
+        clearSelection();
+    }
+}
+
+function updateSelection() {
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    selectedFiles.clear();
+    
+    checkboxes.forEach(cb => {
+        if (cb.checked) {
+            selectedFiles.add(cb.getAttribute('data-file-path'));
+        }
+    });
+    
+    document.getElementById('selectedCount').textContent = selectedFiles.size;
+    document.getElementById('moveSelectedBtn').disabled = selectedFiles.size === 0;
+}
+
+function selectAll() {
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    checkboxes.forEach(cb => cb.checked = true);
+    updateSelection();
+}
+
+function clearSelection() {
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    checkboxes.forEach(cb => cb.checked = false);
+    updateSelection();
+}
+
+function showMoveDialog() {
+    if (selectedFiles.size === 0) return;
+    
+    filesToMove = Array.from(selectedFiles);
+    displayFilesToMove();
+    
+    const modal = new bootstrap.Modal(document.getElementById('moveFilesModal'));
+    modal.show();
+}
+
+function showSingleMoveDialog(filePath, filename) {
+    filesToMove = [filePath];
+    displayFilesToMove();
+    
+    const modal = new bootstrap.Modal(document.getElementById('moveFilesModal'));
+    modal.show();
+}
+
+function displayFilesToMove() {
+    const container = document.getElementById('filesToMove');
+    container.innerHTML = '';
+    
+    filesToMove.forEach(filePath => {
+        const filename = filePath.split('/').pop();
+        const fileItem = document.createElement('div');
+        fileItem.className = 'mb-1';
+        fileItem.innerHTML = `
+            <i class="bi bi-file-earmark me-2"></i>
+            <span>${filename}</span>
+            <small class="text-muted ms-2">(${filePath})</small>
+        `;
+        container.appendChild(fileItem);
+    });
+}
+
+function loadDestinationFolders() {
+    const destinationType = document.getElementById('destinationType').value;
+    const folderSelect = document.getElementById('destinationFolder');
+    
+    folderSelect.innerHTML = '<option value="">Root folder</option>';
+    
+    if (!destinationType) return;
+    
+    fetch(`/api/folders?type=${destinationType}&flat=true`)
+        .then(response => response.json())
+        .then(data => {
+            const folders = data[destinationType] || [];
+            folders.forEach(folder => {
+                const option = document.createElement('option');
+                option.value = folder.path;
+                option.textContent = folder.display_name;
+                
+                if (folder.depth > 0) {
+                    option.style.paddingLeft = (folder.depth * 20) + 'px';
+                }
+                
+                folderSelect.appendChild(option);
+            });
+        })
+        .catch(error => {
+            console.error('Error loading folders:', error);
+        });
+}
+
+function executeMove() {
+    const destinationType = document.getElementById('destinationType').value;
+    let destinationFolder = document.getElementById('destinationFolder').value;
+    const newFolder = document.getElementById('newDestinationFolder').value.trim();
+    
+    if (!destinationType) {
+        alert('Please select a destination type');
+        return;
+    }
+    
+    // Use new folder if provided
+    if (newFolder) {
+        destinationFolder = newFolder;
+    }
+    
+    const moveProgress = document.getElementById('moveProgress');
+    const confirmBtn = document.getElementById('confirmMoveBtn');
+    
+    moveProgress.style.display = 'block';
+    confirmBtn.disabled = true;
+    
+    const moveData = {
+        file_paths: filesToMove,
+        destination_folder: destinationFolder,
+        destination_type: destinationType
+    };
+    
+    fetch('/api/move-files', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(moveData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        moveProgress.style.display = 'none';
+        confirmBtn.disabled = false;
+        
+        if (data.error) {
+            alert('Error: ' + data.error);
+        } else {
+            let message = data.message;
+            if (data.errors && data.errors.length > 0) {
+                message += '\n\nWarnings:\n' + data.errors.join('\n');
+            }
+            alert(message);
+            
+            // Close modal and refresh page
+            bootstrap.Modal.getInstance(document.getElementById('moveFilesModal')).hide();
+            location.reload();
+        }
+    })
+    .catch(error => {
+        moveProgress.style.display = 'none';
+        confirmBtn.disabled = false;
+        alert('Error moving files: ' + error);
+    });
+}
+
+function applyFilters() {
+    const typeFilter = document.getElementById('typeFilter').value;
+    const folderFilter = document.getElementById('folderFilter').value;
+    const sortFilter = document.getElementById('sortFilter').value;
+    
+    const params = new URLSearchParams();
+    if (typeFilter) params.set('type', typeFilter);
+    if (folderFilter) params.set('folder', folderFilter);
+    if (sortFilter) params.set('sort', sortFilter);
+    
+    const url = "{{ url_for('gallery') }}" + (params.toString() ? '?' + params.toString() : '');
+    window.location.href = url;
+}
+
+function clearFilters() {
+    window.location.href = "{{ url_for('gallery') }}";
+}
+
+function deleteFile(relativePath) {
+    const deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+    const deleteFileName = document.getElementById('deleteFileName');
+    const deleteForm = document.getElementById('deleteForm');
+    
+    const filename = relativePath.split('/').pop(); // Get just the filename for display
+    deleteFileName.textContent = filename;
+    deleteForm.action = "{{ url_for('delete_file', filename='FILENAME') }}".replace('FILENAME', encodeURIComponent(relativePath));
+    
+    deleteModal.show();
+}
+
+function setTemplate(templatePath) {
+    document.getElementById('folder_path').value = templatePath;
+}
+</script>
+{% endblock %}

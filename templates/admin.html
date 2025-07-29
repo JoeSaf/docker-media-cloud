@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+
+{% block title %}Admin - Media Manager{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-gear"></i> Admin Panel</h2>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card stats-card text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">Total Users</h5>
+                        <h2>{{ stats.total_users }}</h2>
+                    </div>
+                    <i class="bi bi-people fs-1"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stats-card text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">Total Files</h5>
+                        <h2>{{ stats.total_files }}</h2>
+                    </div>
+                    <i class="bi bi-files fs-1"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stats-card text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">Storage Used</h5>
+                        <h2>{{ stats.total_size|filesize }}</h2>
+                    </div>
+                    <i class="bi bi-hdd fs-1"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stats-card text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">Total Folders</h5>
+                        <h2>{{ stats.folders.image + stats.folders.video + stats.folders.audio }}</h2>
+                    </div>
+                    <i class="bi bi-folder fs-1"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Detailed Statistics -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Files by Type</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-4 text-center">
+                        <i class="bi bi-image text-primary fs-2"></i>
+                        <h4>{{ stats.get('files', {}).get('by_type', {}).get('image', 0) }}</h4>
+                        <small class="text-muted">Images</small>
+                    </div>
+                    <div class="col-4 text-center">
+                        <i class="bi bi-play-circle text-success fs-2"></i>
+                        <h4>{{ stats.get('files', {}).get('by_type', {}).get('video', 0) }}</h4>
+                        <small class="text-muted">Videos</small>
+                    </div>
+                    <div class="col-4 text-center">
+                        <i class="bi bi-music-note text-warning fs-2"></i>
+                        <h4>{{ stats.get('files', {}).get('by_type', {}).get('audio', 0) }}</h4>
+                        <small class="text-muted">Audio</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Folders by Type</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-4 text-center">
+                        <i class="bi bi-folder text-primary fs-2"></i>
+                        <h4>{{ stats.folders.image }}</h4>
+                        <small class="text-muted">Image Folders</small>
+                    </div>
+                    <div class="col-4 text-center">
+                        <i class="bi bi-folder text-success fs-2"></i>
+                        <h4>{{ stats.folders.video }}</h4>
+                        <small class="text-muted">Video Folders</small>
+                    </div>
+                    <div class="col-4 text-center">
+                        <i class="bi bi-folder text-warning fs-2"></i>
+                        <h4>{{ stats.folders.audio }}</h4>
+                        <small class="text-muted">Audio Folders</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">System Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <button class="btn btn-primary" onclick="refreshJellyfin()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Jellyfin Library
+                    </button>
+                    <button class="btn btn-info" onclick="generateThumbnails()">
+                        <i class="bi bi-image"></i> Regenerate Thumbnails
+                    </button>
+                    <button class="btn btn-warning" onclick="cleanupThumbnails()">
+                        <i class="bi bi-trash"></i> Cleanup Orphaned Thumbnails
+                    </button>
+                    <button class="btn btn-success" onclick="getSystemStats()">
+                        <i class="bi bi-bar-chart"></i> Refresh Statistics
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">System Information</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td><strong>Media Directory:</strong></td>
+                        <td>/mnt/media/</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Jellyfin URL:</strong></td>
+                        <td>{{ config.JELLYFIN_URL or 'Not configured' }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Max Upload Size:</strong></td>
+                        <td>{{ (config.MAX_CONTENT_LENGTH / 1024 / 1024)|int }} MB</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Thumbnail Size:</strong></td>
+                        <td>{{ config.THUMBNAIL_SIZE[0] }}x{{ config.THUMBNAIL_SIZE[1] }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Generated Thumbnails:</strong></td>
+                        <td>{{ stats.get('thumbnails', 0) }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Action Results -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div id="actionResults" class="alert" style="display: none;" role="alert">
+            <div id="actionResultsContent"></div>
+        </div>
+    </div>
+</div>
+
+<!-- File Management Tools -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">File Management</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Quick Folder Creation</h6>
+                        <form onsubmit="createQuickFolder(event)">
+                            <div class="input-group mb-3">
+                                <select class="form-select" id="quickFolderType" required>
+                                    <option value="">Select type...</option>
+                                    <option value="image">Images</option>
+                                    <option value="video">Videos</option>
+                                    <option value="audio">Audio</option>
+                                </select>
+                                <input type="text" class="form-control" id="quickFolderName" 
+                                       placeholder="Folder name" required>
+                                <button class="btn btn-outline-primary" type="submit">
+                                    <i class="bi bi-folder-plus"></i> Create
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Storage Analysis</h6>
+                        <div class="d-grid">
+                            <button class="btn btn-outline-info" onclick="analyzeStorage()">
+                                <i class="bi bi-pie-chart"></i> Analyze Storage Usage
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showResult(message, type = 'info') {
+    const resultsDiv = document.getElementById('actionResults');
+    const contentDiv = document.getElementById('actionResultsContent');
+    
+    resultsDiv.className = `alert alert-${type}`;
+    contentDiv.innerHTML = message;
+    resultsDiv.style.display = 'block';
+    
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        resultsDiv.style.display = 'none';
+    }, 5000);
+}
+
+function refreshJellyfin() {
+    showResult('<i class="bi bi-hourglass-split"></i> Refreshing Jellyfin library...', 'info');
+    
+    fetch('/api/admin/refresh-jellyfin', {method: 'POST'})
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showResult('<i class="bi bi-check-circle"></i> Jellyfin library refresh triggered successfully!', 'success');
+            } else {
+                showResult('<i class="bi bi-x-circle"></i> Failed to refresh Jellyfin library: ' + data.error, 'danger');
+            }
+        })
+        .catch(error => {
+            showResult('<i class="bi bi-x-circle"></i> Error: ' + error, 'danger');
+        });
+}
+
+function generateThumbnails() {
+    if (confirm('This will regenerate all thumbnails. This may take a while. Continue?')) {
+        showResult('<i class="bi bi-hourglass-split"></i> Generating thumbnails...', 'info');
+        
+        fetch('/api/admin/generate-thumbnails', {method: 'POST'})
+            .then(response => response.json())
+            .then(data => {
+                showResult(`<i class="bi bi-check-circle"></i> Thumbnail generation completed. Generated: ${data.generated}`, 'success');
+                setTimeout(() => location.reload(), 2000);
+            })
+            .catch(error => {
+                showResult('<i class="bi bi-x-circle"></i> Error: ' + error, 'danger');
+            });
+    }
+}
+
+function cleanupThumbnails() {
+    if (confirm('This will remove orphaned thumbnails. Continue?')) {
+        showResult('<i class="bi bi-hourglass-split"></i> Cleaning up thumbnails...', 'info');
+        
+        fetch('/api/admin/cleanup-thumbnails', {method: 'POST'})
+            .then(response => response.json())
+            .then(data => {
+                showResult(`<i class="bi bi-check-circle"></i> Cleanup completed. Removed: ${data.removed}`, 'success');
+                setTimeout(() => location.reload(), 2000);
+            })
+            .catch(error => {
+                showResult('<i class="bi bi-x-circle"></i> Error: ' + error, 'danger');
+            });
+    }
+}
+
+function getSystemStats() {
+    showResult('<i class="bi bi-hourglass-split"></i> Refreshing statistics...', 'info');
+    
+    fetch('/api/admin/stats')
+        .then(response => response.json())
+        .then(data => {
+            showResult('<i class="bi bi-check-circle"></i> Statistics refreshed successfully!', 'success');
+            setTimeout(() => location.reload(), 1000);
+        })
+        .catch(error => {
+            showResult('<i class="bi bi-x-circle"></i> Error: ' + error, 'danger');
+        });
+}
+
+function createQuickFolder(event) {
+    event.preventDefault();
+    
+    const folderType = document.getElementById('quickFolderType').value;
+    const folderName = document.getElementById('quickFolderName').value;
+    
+    if (!folderType || !folderName) {
+        showResult('<i class="bi bi-x-circle"></i> Please fill in both fields', 'warning');
+        return;
+    }
+    
+    showResult('<i class="bi bi-hourglass-split"></i> Creating folder...', 'info');
+    
+    fetch('/api/create-folder', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            folder_name: folderName,
+            file_type: folderType
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showResult(`<i class="bi bi-x-circle"></i> ${data.error}`, 'danger');
+        } else {
+            showResult(`<i class="bi bi-check-circle"></i> ${data.message}`, 'success');
+            document.getElementById('quickFolderName').value = '';
+            document.getElementById('quickFolderType').value = '';
+        }
+    })
+    .catch(error => {
+        showResult('<i class="bi bi-x-circle"></i> Error: ' + error, 'danger');
+    });
+}
+
+function analyzeStorage() {
+    showResult('<i class="bi bi-hourglass-split"></i> Analyzing storage...', 'info');
+    
+    fetch('/api/admin/stats')
+        .then(response => response.json())
+        .then(data => {
+            const storage = data.storage;
+            const totalGB = (storage.total_bytes / (1024 * 1024 * 1024)).toFixed(2);
+            const imageGB = (storage.by_type.image / (1024 * 1024 * 1024)).toFixed(2);
+            const videoGB = (storage.by_type.video / (1024 * 1024 * 1024)).toFixed(2);
+            const audioGB = (storage.by_type.audio / (1024 * 1024 * 1024)).toFixed(2);
+            
+            const analysis = `
+                <strong>Storage Analysis:</strong><br>
+                <i class="bi bi-hdd"></i> Total: ${totalGB} GB<br>
+                <i class="bi bi-image text-primary"></i> Images: ${imageGB} GB (${((storage.by_type.image / storage.total_bytes) * 100).toFixed(1)}%)<br>
+                <i class="bi bi-play-circle text-success"></i> Videos: ${videoGB} GB (${((storage.by_type.video / storage.total_bytes) * 100).toFixed(1)}%)<br>
+                <i class="bi bi-music-note text-warning"></i> Audio: ${audioGB} GB (${((storage.by_type.audio / storage.total_bytes) * 100).toFixed(1)}%)
+            `;
+            
+            showResult(analysis, 'info');
+        })
+        .catch(error => {
+            showResult('<i class="bi bi-x-circle"></i> Error: ' + error, 'danger');
+        });
+}
+</script>
+{% endblock %}
