@@ -1,39 +1,3 @@
-# Main execution with enhanced functionality
-main() {
-    echo "🔧 Running standard management operations..."
-    
-    # For non-setup commands, we still need to check basics
-    if [[ ! -f "docker-compose.yml" ]]; then
-        print_error "docker-compose.yml not found. Run './setup.sh setup' first."
-        exit 1
-    fi
-    
-    # Use appropriate docker-compose command
-    local compose_cmd="docker-compose"
-    if ! docker-compose ps &>/dev/null 2>&1; then
-        compose_cmd="sudo docker-compose"
-    fi
-    
-    case "${1:-setup}" in
-        setup|install|complete)
-            complete_setup
-            ;;
-        start)
-            print_status "Starting services..."
-            $compose_cmd up -d
-            wait_for_services
-            show_status
-            ;;
-        stop)
-            print_status "Stopping services..."
-            $compose_cmd down
-            print_success "Services stopped"
-            ;;
-        restart)
-            print_status "Restarting services..."
-            $compose_cmd restart
-            wait_#!/bin/bash
-
 # Media Server Setup Script for Arch Linux
 # This script downloads, installs, and configures everything needed for the media server
 
