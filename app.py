@@ -25,7 +25,7 @@ import requests
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'your-secret-key-change-this'
     UPLOAD_FOLDER = '/mnt/media'
-    MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500MB max file size
+    MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024  # 10GB max file size
     ALLOWED_EXTENSIONS = {
         'image': {'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'},
         'video': {'mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm', 'm4v'},
@@ -35,6 +35,13 @@ class Config:
     JELLYFIN_API_KEY = os.environ.get('JELLYFIN_API_KEY', '')
     THUMBNAIL_SIZE = (300, 300)
     USERS_FILE = 'users.json'
+    
+    # File size limits by type (in bytes)
+    FILE_SIZE_LIMITS = {
+        'image': 100 * 1024 * 1024,      # 100MB for images
+        'video': 10 * 1024 * 1024 * 1024, # 10GB for videos
+        'audio': 500 * 1024 * 1024       # 500MB for audio
+    }
 
 # Flask app setup
 app = Flask(__name__)
@@ -300,14 +307,30 @@ def refresh_jellyfin_library():
         print(f"Error refreshing Jellyfin library: {e}")
         return False
 
-def get_file_info(file_path):
-    """Get file information"""
-    stat = os.stat(file_path)
-    return {
-        'size': stat.st_size,
-        'modified': datetime.fromtimestamp(stat.st_mtime),
-        'created': datetime.fromtimestamp(stat.st_ctime)
-    }
+def validate_file_size(file_path, file_type):
+    """Validate file size based on type"""
+    try:
+        file_size = os.path.getsize(file_path)
+        max_size = Config.FILE_SIZE_LIMITS.get(file_type, Config.MAX_CONTENT_LENGTH)
+        
+        if file_size > max_size:
+            return False, f"File too large. Maximum size for {file_type} files is {format_file_size(max_size)}"
+        return True, None
+    except Exception as e:
+        return False, f"Error checking file size: {str(e)}"
+
+def format_file_size(size_bytes):
+    """Format file size in human readable format"""
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024.0
+        i += 1
+    
+    return f"{size_bytes:.1f} {size_names[i]}"
 
 def count_nested_folders(base_path):
     """Count total number of folders including nested ones"""
@@ -388,6 +411,7 @@ def upload():
                 return redirect(request.url)
         
         uploaded_files = []
+        errors = []
         
         for file in files:
             if file.filename == '':
@@ -395,12 +419,12 @@ def upload():
             
             is_allowed, file_type = allowed_file(file.filename)
             if not is_allowed:
-                flash(f'File type not allowed: {file.filename}')
+                errors.append(f'File type not allowed: {file.filename}')
                 continue
             
             # If file type filter is set, only allow that type
             if file_type_filter and file_type != file_type_filter:
-                flash(f'File {file.filename} does not match selected type filter ({file_type_filter})')
+                errors.append(f'File {file.filename} does not match selected type filter ({file_type_filter})')
                 continue
             
             filename = secure_filename(file.filename)
@@ -429,29 +453,74 @@ def upload():
                 filename = f"{name}_{timestamp}{ext}"
                 file_path = os.path.join(media_dir, filename)
             
-            # Save file
-            file.save(file_path)
-            
-            # Generate thumbnail
-            thumbnail_filename = f"{hashlib.md5(file_path.encode()).hexdigest()}.jpg"
-            thumbnail_path = os.path.join(thumbnails_dir, thumbnail_filename)
-            
-            if file_type in ['image', 'video']:
-                generate_thumbnail(file_path, file_type, thumbnail_path)
-            
-            uploaded_files.append({
-                'filename': filename,
-                'type': file_type,
-                'folder': custom_folder or 'Root',
-                'path': file_path,
-                'thumbnail': thumbnail_filename if os.path.exists(thumbnail_path) else None
-            })
+            try:
+                # For large files (especially videos), use chunked saving
+                file_size = 0
+                if hasattr(file, 'content_length') and file.content_length:
+                    file_size = file.content_length
+                
+                # Check file size limit
+                max_size = Config.FILE_SIZE_LIMITS.get(file_type, Config.MAX_CONTENT_LENGTH)
+                if file_size > max_size:
+                    errors.append(f'File {filename} is too large. Maximum size for {file_type} files is {format_file_size(max_size)}')
+                    continue
+                
+                # Save file using chunked method for large files
+                if file_size > 100 * 1024 * 1024:  # Use chunked saving for files > 100MB
+                    success, error = chunked_file_save(file, file_path)
+                    if not success:
+                        errors.append(f'Failed to save {filename}: {error}')
+                        continue
+                else:
+                    # Regular save for smaller files
+                    file.save(file_path)
+                
+                # Validate saved file size
+                is_valid, error_msg = validate_file_size(file_path, file_type)
+                if not is_valid:
+                    # Remove the invalid file
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    errors.append(f'{filename}: {error_msg}')
+                    continue
+                
+                # Generate thumbnail
+                thumbnail_filename = f"{hashlib.md5(file_path.encode()).hexdigest()}.jpg"
+                thumbnail_path = os.path.join(thumbnails_dir, thumbnail_filename)
+                
+                if file_type in ['image', 'video']:
+                    generate_thumbnail(file_path, file_type, thumbnail_path)
+                
+                uploaded_files.append({
+                    'filename': filename,
+                    'type': file_type,
+                    'folder': custom_folder or 'Root',
+                    'path': file_path,
+                    'size': os.path.getsize(file_path),
+                    'thumbnail': thumbnail_filename if os.path.exists(thumbnail_path) else None
+                })
+                
+            except Exception as e:
+                errors.append(f'Error uploading {filename}: {str(e)}')
+                # Clean up partial file if it exists
+                if os.path.exists(file_path):
+                    os.remove(file_path)
         
+        # Show results
         if uploaded_files:
             flash(f'Successfully uploaded {len(uploaded_files)} file(s)')
+            # Show file sizes for large uploads
+            for uploaded_file in uploaded_files:
+                if uploaded_file['size'] > 100 * 1024 * 1024:  # > 100MB
+                    flash(f"✓ {uploaded_file['filename']} ({format_file_size(uploaded_file['size'])})")
+            
             # Refresh Jellyfin library
             if refresh_jellyfin_library():
                 flash('Jellyfin library refresh triggered')
+        
+        if errors:
+            for error in errors:
+                flash(f'Error: {error}', 'error')
         
         return redirect(url_for('gallery'))
     
@@ -461,7 +530,10 @@ def upload():
         media_dir = get_media_path(file_type)
         folder_structure[file_type] = get_all_folder_paths(media_dir)
     
-    return render_template('upload.html', folder_structure=folder_structure)
+    return render_template('upload.html', 
+                         folder_structure=folder_structure,
+                         file_size_limits=Config.FILE_SIZE_LIMITS,
+                         format_file_size=format_file_size)
 
 @app.route('/gallery')
 @login_required

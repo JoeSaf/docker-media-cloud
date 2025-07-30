@@ -3,102 +3,686 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Media Manager{% endblock %}</title>
+    <title>{% block title %}SenCloud{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     <style>
+        /* Glassmorphism Base Styles */
+        :root {
+            --glass-bg: rgba(38, 195, 223, 0.25);
+            --glass-border: rgba(255, 255, 255, 0.3);
+            --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            --glass-backdrop: blur(10px);
+            --gradient-primary: linear-gradient(135deg, rgba(102, 126, 234, 0.9) 0%, rgba(118, 75, 162, 0.9) 100%);
+            --gradient-secondary: linear-gradient(135deg, rgba(132, 204, 22, 0.9) 0%, rgba(34, 197, 94, 0.9) 100%);
+            --text-primary: #1a202c;
+            --text-secondary: #4a5568;
+            --text-muted: #718096;
+        }
+
+        [data-bs-theme="dark"] {
+            --glass-bg: rgba(0, 0, 0, 0.4);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            --text-primary: #f7fafc;
+            --text-secondary: #e2e8f0;
+            --text-muted: #a0aec0;
+        }
+
+        body {
+            background: linear-gradient(135deg, 
+                rgba(102, 126, 234, 0.05) 0%, 
+                rgba(118, 75, 162, 0.05) 25%,
+                rgba(132, 204, 22, 0.05) 50%,
+                rgba(34, 197, 94, 0.05) 75%,
+                rgba(59, 130, 246, 0.05) 100%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            color: var(--text-primary);
+        }
+
+        [data-bs-theme="dark"] body {
+            background: linear-gradient(135deg, 
+                rgba(31, 41, 55, 0.6) 0%, 
+                rgba(55, 65, 81, 0.6) 25%,
+                rgba(75, 85, 99, 0.6) 50%,
+                rgba(107, 114, 128, 0.6) 75%,
+                rgba(31, 41, 55, 0.6) 100%);
+            color: var(--text-primary);
+        }
+
+        /* Glassmorphism Component Classes */
+        .glass {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+        }
+
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+            border-radius: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .glass-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px 0 rgba(31, 38, 135, 0.5);
+        }
+
+        .glass-navbar {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border-bottom: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+        }
+
+        .glass-modal {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+            border-radius: 20px;
+        }
+
+        /* Navbar Glassmorphism */
+        .navbar {
+            background: var(--glass-bg) !important;
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border-bottom: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+        }
+
+        .navbar-brand {
+            font-weight: bold;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            filter: drop-shadow(0 0 10px rgba(102, 126, 234, 0.3));
+        }
+
+        .navbar-nav .nav-link {
+            color: var(--text-primary) !important;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .navbar-nav .nav-link:hover {
+            color: #667eea !important;
+            transform: translateY(-1px);
+        }
+
+        /* Fix dropdown positioning and z-index */
+        .navbar .nav-item.dropdown {
+            position: relative;
+        }
+
+        /* Default dropdown styles for all screen sizes */
+        .navbar .dropdown-menu {
+            background: var(--dropdown-bg) !important;
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            border-radius: 15px;
+            color: var(--text-primary);
+            z-index: 1060 !important;
+            position: absolute !important;
+            top: 100% !important;
+            transform: none !important;
+            will-change: transform;
+        }
+
+        /* MOBILE FIRST: Default mobile styles (under 992px) */
+        @media (max-width: 991.98px) {
+            .navbar .nav-item.dropdown {
+                position: relative;
+            }
+            
+            .navbar .dropdown-menu {
+                position: static !important;
+                float: none;
+                width: auto;
+                margin-top: 0;
+                background-color: var(--dropdown-bg) !important;
+                border: 1px solid var(--glass-border);
+                box-shadow: none;
+                min-width: 100%;
+                left: auto !important;
+                right: auto !important;
+            }
+        }
+
+        /* DESKTOP: Styles for screens 992px and above */
+        @media (min-width: 992px) {
+            /* Folder dropdown specific positioning */
+            .navbar .nav-item.dropdown:has(#folderDropdown) {
+                position: static;
+            }
+
+            .navbar .nav-item.dropdown:has(#folderDropdown) .dropdown-menu {
+                position: absolute !important;
+                top: 100% !important;
+                left: 0 !important;
+                right: auto !important;
+                min-width: 350px;
+            }
+
+            /* User dropdown specific positioning */
+            .navbar .nav-item.dropdown:not(:has(#folderDropdown)) {
+                position: relative;
+            }
+
+            .navbar .nav-item.dropdown:not(:has(#folderDropdown)) .dropdown-menu {
+                position: absolute !important;
+                top: 100% !important;
+                right: 0 !important;
+                left: auto !important;
+                min-width: 200px;
+            }
+
+            /* Fallback for browsers that don't support :has() */
+            @supports not selector(:has(*)) {
+                .navbar .nav-item.dropdown {
+                    position: relative;
+                }
+                
+                /* Folder dropdown gets left alignment */
+                #folderDropdown + .dropdown-menu {
+                    left: 0 !important;
+                    right: auto !important;
+                    min-width: 350px;
+                }
+                
+                /* User dropdown gets right alignment */
+                .navbar-nav .nav-item:last-child .dropdown-menu {
+                    right: 0 !important;
+                    left: auto !important;
+                    min-width: 200px;
+                }
+            }
+        }
+
+        /* Ensure dropdown doesn't interfere with main content */
+        .container {
+            position: relative;
+            z-index: 1;
+        }
+
+        .navbar {
+            position: relative;
+            z-index: 1040;
+        }
+
+        /* Force dropdown to stay above everything */
+        .dropdown-menu.show {
+            z-index: 1060 !important;
+            display: block !important;
+        }
+
+        .navbar .dropdown-item {
+            color: var(--text-primary) !important;
+            background: transparent;
+            padding: 8px 16px;
+            margin: 2px 4px;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .navbar .dropdown-item:hover {
+            background: rgba(102, 126, 234, 0.15) !important;
+            color: var(--text-primary) !important;
+            transform: translateX(3px);
+        }
+
+        /* Cards and Components */
         .thumbnail-container {
             position: relative;
             overflow: hidden;
-            border-radius: 8px;
-            background: #f8f9fa;
+            border-radius: 15px;
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+            transition: all 0.3s ease;
         }
+
+        .thumbnail-container:hover {
+            transform: scale(1.02);
+            box-shadow: 0 12px 40px 0 rgba(31, 38, 135, 0.5);
+        }
+
         .thumbnail {
             width: 100%;
             height: 200px;
             object-fit: cover;
         }
+
         .file-overlay {
             position: absolute;
             bottom: 0;
             left: 0;
             right: 0;
-            background: linear-gradient(transparent, rgba(0,0,0,0.7));
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
             color: white;
             padding: 10px;
             font-size: 0.8rem;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
         }
+
         .upload-zone {
-            border: 2px dashed #dee2e6;
-            border-radius: 8px;
+            border: 2px dashed var(--glass-border);
+            border-radius: 20px;
             padding: 3rem;
             text-align: center;
             transition: all 0.3s ease;
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            box-shadow: var(--glass-shadow);
         }
+
         .upload-zone.dragover {
-            border-color: #0d6efd;
-            background-color: #f8f9ff;
+            border-color: rgba(13, 110, 253, 0.5);
+            background: rgba(248, 249, 255, 0.1);
+            transform: scale(1.02);
         }
+
         .media-player {
             max-width: 100%;
             max-height: 70vh;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: var(--glass-shadow);
         }
-        .dark-mode {
-            background-color: #212529;
-            color: #ffffff;
-        }
-        .navbar-brand {
-            font-weight: bold;
-        }
+
         .stats-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--gradient-primary);
             color: white;
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+            transition: all 0.3s ease;
         }
+
+        .stats-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 45px 0 rgba(102, 126, 234, 0.4);
+        }
+
         .folder-tree {
-            max-height: 400px;
+            max-height: 300px;
             overflow-y: auto;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            border-radius: 10px;
+            padding: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
+
         .folder-item {
-            padding: 4px 8px;
+            padding: 6px 10px;
             margin: 2px 0;
-            border-radius: 4px;
-            transition: background-color 0.2s;
+            border-radius: 8px;
+            transition: all 0.2s ease;
             cursor: pointer;
             display: flex;
             justify-content: between;
             align-items: center;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            font-size: 0.9rem;
         }
+
+        [data-bs-theme="dark"] .folder-item {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
         .folder-item:hover {
-            background-color: rgba(0,123,255,0.1);
+            background: rgba(102, 126, 234, 0.2);
+            transform: translateX(3px);
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+            color: var(--text-primary);
         }
+
         .folder-item.active {
-            background-color: rgba(0,123,255,0.2);
+            background: rgba(102, 126, 234, 0.3);
             font-weight: bold;
+            border-color: rgba(102, 126, 234, 0.4);
+            color: var(--text-primary);
         }
+
         .folder-actions {
             opacity: 0;
-            transition: opacity 0.2s;
+            transition: opacity 0.3s ease;
         }
+
         .folder-item:hover .folder-actions {
             opacity: 1;
         }
+
         .folder-indent {
             margin-left: 20px;
         }
-        .navbar-nav .dropdown-menu {
-            min-width: 350px;
+
+        /* Alerts with Glassmorphism */
+        .alert {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+            border-radius: 15px;
+            box-shadow: var(--glass-shadow);
+        }
+
+        .alert-info {
+            background: rgba(13, 202, 240, 0.1);
+            border-color: rgba(13, 202, 240, 0.2);
+        }
+
+        .alert-warning {
+            background: rgba(255, 193, 7, 0.1);
+            border-color: rgba(255, 193, 7, 0.2);
+        }
+
+        .alert-danger {
+            background: rgba(220, 53, 69, 0.1);
+            border-color: rgba(220, 53, 69, 0.2);
+        }
+
+        /* Modal Glassmorphism */
+        .modal-content {
+            background: var(--modal-bg) !important;
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            border-radius: 20px;
+        }
+
+        .modal-header {
+            border-bottom: 1px solid var(--glass-border);
+            border-radius: 20px 20px 0 0;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .modal-footer {
+            border-top: 1px solid var(--glass-border);
+            border-radius: 0 0 20px 20px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .modal-body {
+            color: var(--text-primary);
+        }
+
+        .modal-title {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* Buttons with Glassmorphism */
+        .btn {
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            border: 1px solid var(--glass-border);
+        }
+
+        .btn-primary {
+            background: var(--gradient-primary);
+            border: none;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+        }
+
+        .btn-outline-primary {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid rgba(13, 110, 253, 0.3);
+        }
+
+        .btn-outline-danger {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid rgba(220, 53, 69, 0.3);
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--glass-bg);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--glass-border);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* Animation for glass elements */
+        @keyframes glassShimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+
+        .glass-shimmer {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-shimmer::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255, 255, 255, 0.1),
+                transparent
+            );
+            background-size: 200% 100%;
+            animation: glassShimmer 3s infinite;
+            pointer-events: none;
+        }
+
+        /* Container spacing */
+        .container {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Form controls */
+        .form-control, .form-select {
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-backdrop);
+            -webkit-backdrop-filter: var(--glass-backdrop);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .form-control:focus, .form-select:focus {
+            background: var(--glass-bg);
+            border-color: rgba(13, 110, 253, 0.5);
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.1);
+            color: var(--text-primary);
+        }
+
+        .form-control::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* Dropdown items */
+        .dropdown-item {
+            border-radius: 8px;
+            margin: 2px 0;
+            transition: all 0.3s ease;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .dropdown-item:hover {
+            background: rgba(13, 110, 253, 0.15);
+            transform: translateX(5px);
+            color: var(--text-primary);
+        }
+
+        .dropdown-header {
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .text-muted {
+            color: var(--text-muted) !important;
+        }
+
+        .text-primary {
+            color: #667eea !important;
+        }
+
+        .text-secondary {
+            color: var(--text-secondary) !important;
+        }
+
+        /* Enhanced text visibility */
+        h1, h2, h3, h4, h5, h6 {
+            color: var(--text-primary) !important;
+            font-weight: 600;
+        }
+
+        p, span, div {
+            color: var(--text-primary);
+        }
+
+        .fw-bold {
+            font-weight: 700 !important;
+        }
+
+        /* Button text visibility */
+        .btn {
+            font-weight: 500;
+            border: 1px solid var(--glass-border);
+        }
+
+        .btn-outline-primary {
+            color: #667eea !important;
+            border-color: #667eea !important;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-outline-primary:hover {
+            background-color: #667eea !important;
+            border-color: #667eea !important;
+            color: white !important;
+        }
+
+        .btn-outline-danger {
+            color: #dc3545 !important;
+            border-color: #dc3545 !important;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-outline-danger:hover {
+            background-color: #dc3545 !important;
+            border-color: #dc3545 !important;
+            color: white !important;
+        }
+
+        /* Dropdown header styling */
+        .dropdown-header {
+            color: var(--text-secondary) !important;
+            font-weight: 600;
+            font-size: 0.875rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+
+        /* Text color overrides for better visibility */
+        .text-muted {
+            color: var(--text-muted) !important;
+            opacity: 0.8;
+        }
+
+        .text-primary {
+            color: #667eea !important;
+            font-weight: 500;
+        }
+
+        .text-secondary {
+            color: var(--text-secondary) !important;
+        }
+
+        /* Ensure all text in dropdowns is visible */
+        .dropdown-menu * {
+            color: var(--text-primary) !important;
+        }
+
+        .dropdown-menu .text-muted {
+            color: var(--text-muted) !important;
+            opacity: 0.7;
+        }
+
+        /* Loading spinner visibility */
+        .spinner-border {
+            color: var(--text-primary);
+        }
+
+        /* Better contrast for small text */
+        small {
+            color: var(--text-secondary) !important;
+            font-weight: 500;
         }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container">
             <a class="navbar-brand" href="{{ url_for('index') }}">
-                <i class="bi bi-camera-video"></i> Media Manager
+                <i class="bi bi-camera-video"></i> SenCloud
             </a>
             
             {% if current_user.is_authenticated %}
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <button class="navbar-toggler glass" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
@@ -184,7 +768,7 @@
         {% with messages = get_flashed_messages() %}
             {% if messages %}
                 {% for message in messages %}
-                    <div class="alert alert-info alert-dismissible fade show" role="alert">
+                    <div class="alert alert-info alert-dismissible fade show glass-shimmer" role="alert">
                         {{ message }}
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>
@@ -260,7 +844,7 @@
                     <button type="button" class="btn btn-danger" id="confirmDeleteFolder">
                         <i class="bi bi-trash"></i> Delete Folder
                     </button>
-                </div>
+                    </div>
             </div>
         </div>
     </div>

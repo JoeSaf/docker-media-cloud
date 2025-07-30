@@ -1,11 +1,14 @@
-# Media Server Setup Script for Arch Linux
+#!/bin/bash
+
+# Universal Media Server Setup Script for Debian/Ubuntu and Arch Linux
 # This script downloads, installs, and configures everything needed for the media server
 
 set -e
 
-echo "🚀 Complete Media Server Setup Script"
-echo "====================================="
+echo "🚀 Universal Media Server Setup Script"
+echo "======================================"
 echo "This script will:"
+echo "  🔍 Detect your Linux distribution"
 echo "  📦 Install Docker and dependencies"
 echo "  👤 Configure user permissions"
 echo "  📁 Create directory structure"
@@ -49,41 +52,176 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check and install system dependencies
-install_system_deps() {
-    print_status "Installing system dependencies..."
+# Detect the linux distribution
+detect_distro() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        DISTRO=$ID
+        VERSION=$VERSION_ID
+    elif [[ -f /etc/arch-release ]]; then
+        DISTRO="arch"
+    elif [[ -f /etc/debian_version ]]; then
+        DISTRO="debian"
+    else
+        print_error "Unable to detect Linux distribution"
+        exit 1
+    fi
+    
+    case $DISTRO in
+        ubuntu|debian|pop|linuxmint|elementary)
+            DISTRO_FAMILY="debian"
+            ;;
+        arch|manjaro|endeavouros|garuda)
+            DISTRO_FAMILY="arch"
+            ;;
+        fedora|centos|rhel|rocky|almalinux)
+            print_error "Red Hat-based distributions are not currently supported"
+            print_status "Please install Docker manually and ensure docker-compose is available"
+            exit 1
+            ;;
+        *)
+            print_warning "Unknown distribution: $DISTRO"
+            print_status "Attempting to detect package manager..."
+            if command -v pacman &>/dev/null; then
+                DISTRO_FAMILY="arch"
+                print_status "Detected Arch-based system via pacman"
+            elif command -v apt &>/dev/null; then
+                DISTRO_FAMILY="debian"
+                print_status "Detected Debian-based system via apt"
+            else
+                print_error "Unable to determine package manager"
+                exit 1
+            fi
+            ;;
+    esac
+    
+    print_success "Detected: $DISTRO_FAMILY-based system ($DISTRO)"
+}
+
+# Install Docker on Debian/Ubuntu systems
+install_docker_debian() {
+    print_status "Installing Docker on Debian/Ubuntu system..."
+    
+    # Update package index
+    sudo apt update
+    
+    # Install prerequisites
+    sudo apt install -y \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release
+    
+    # Add Docker's official GPG key
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/$DISTRO/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    
+    # Set up Docker repository
+    echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$DISTRO \
+        $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # Update package index with Docker repo
+    sudo apt update
+    
+    # Install Docker
+    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    
+    # Also install standalone docker-compose for compatibility
+    if ! command -v docker-compose &>/dev/null; then
+        print_status "Installing docker-compose via pip as fallback..."
+        sudo apt install -y python3-pip
+        sudo pip3 install docker-compose
+    fi
+}
+
+# Install Docker on Arch systems
+install_docker_arch() {
+    print_status "Installing Docker on Arch system..."
     
     # Update package database
     sudo pacman -Sy
     
-    # Install essential packages
-    local packages=(
-        "docker"
-        "docker-compose" 
-        "python"
-        "python-pip"
-        "curl"
-        "git"
-        "unzip"
-        "ffmpeg"
-    )
+    # Install Docker and docker-compose
+    sudo pacman -S --noconfirm docker docker-compose
+}
+
+# Check and install system dependencies
+install_system_deps() {
+    print_status "Installing system dependencies for $DISTRO_FAMILY..."
     
-    local to_install=()
+    case $DISTRO_FAMILY in
+        debian)
+            # Update package index
+            sudo apt update
+            
+            # Define packages for Debian/Ubuntu
+            local packages=(
+                "python3"
+                "python3-pip"
+                "curl"
+                "git"
+                "unzip" 
+                "ffmpeg"
+            )
+            
+            local to_install=()
+            
+            for package in "${packages[@]}"; do
+                if ! dpkg -l | grep -q "^ii  $package "; then
+                    to_install+=("$package")
+                fi
+            done
+            
+            if [[ ${#to_install[@]} -gt 0 ]]; then
+                print_status "Installing packages: ${to_install[*]}"
+                sudo apt install -y "${to_install[@]}"
+            else
+                print_success "All required packages are already installed"
+            fi
+            
+            # Install Docker if not present
+            if ! command -v docker &>/dev/null; then
+                install_docker_debian
+            else
+                print_success "Docker is already installed"
+            fi
+            ;;
+            
+        arch)
+            # Update package database
+            sudo pacman -Sy
+            
+            # Define packages for Arch
+            local packages=(
+                "docker"
+                "docker-compose"
+                "python"
+                "python-pip"
+                "curl"
+                "git"
+                "unzip"
+                "ffmpeg"
+            )
+            
+            local to_install=()
+            
+            for package in "${packages[@]}"; do
+                if ! pacman -Qi "$package" &>/dev/null; then
+                    to_install+=("$package")
+                fi
+            done
+            
+            if [[ ${#to_install[@]} -gt 0 ]]; then
+                print_status "Installing packages: ${to_install[*]}"
+                sudo pacman -S --noconfirm "${to_install[@]}"
+            else
+                print_success "All required packages are already installed"
+            fi
+            ;;
+    esac
     
-    for package in "${packages[@]}"; do
-        if ! pacman -Qi "$package" &>/dev/null; then
-            to_install+=("$package")
-        fi
-    done
-    
-    if [[ ${#to_install[@]} -gt 0 ]]; then
-        print_status "Installing packages: ${to_install[*]}"
-        sudo pacman -S --noconfirm "${to_install[@]}"
-    else
-        print_success "All required packages are already installed"
-    fi
-    
-    # Enable and start Docker
+    # Enable and start Docker service (universal)
     print_status "Configuring Docker service..."
     sudo systemctl enable docker
     sudo systemctl start docker
@@ -300,19 +438,44 @@ test_docker() {
         if sudo docker --version &>/dev/null; then
             print_warning "Docker works with sudo, but user permissions may need adjustment"
             print_status "Continuing with setup..."
+            docker_permission_issue=true
         else
             print_error "Docker is not working properly"
             exit 1
         fi
     fi
     
-    # Test docker-compose
-    if ! docker-compose --version &>/dev/null && ! sudo docker-compose --version &>/dev/null; then
+    # Test docker-compose (try multiple variants)
+    local compose_working=false
+    
+    # Try docker compose (new plugin syntax)
+    if docker compose version &>/dev/null; then
+        COMPOSE_CMD="docker compose"
+        compose_working=true
+    # Try docker-compose (standalone)
+    elif docker-compose --version &>/dev/null; then
+        COMPOSE_CMD="docker-compose"
+        compose_working=true
+    # Try with sudo
+    elif sudo docker compose version &>/dev/null; then
+        COMPOSE_CMD="sudo docker compose"
+        compose_working=true
+        docker_permission_issue=true
+    elif sudo docker-compose --version &>/dev/null; then
+        COMPOSE_CMD="sudo docker-compose"
+        compose_working=true
+        docker_permission_issue=true
+    fi
+    
+    if [[ "$compose_working" != true ]]; then
         print_error "Docker Compose is not working properly"
+        print_status "Available compose commands:"
+        echo "  - docker compose version: $(docker compose version 2>&1 || echo "Failed")"
+        echo "  - docker-compose --version: $(docker-compose --version 2>&1 || echo "Failed")"
         exit 1
     fi
     
-    print_success "Docker is functional"
+    print_success "Docker is functional (using: $COMPOSE_CMD)"
 }
 
 # Verify all required files exist
@@ -365,9 +528,9 @@ verify_files() {
 pre_pull_images() {
     print_status "Pre-downloading Docker images (this may take a few minutes)..."
     
-    # Use appropriate docker command based on permissions
+    # Use the determined docker command
     local docker_cmd="docker"
-    if ! docker images &>/dev/null; then
+    if [[ -n "${docker_permission_issue:-}" ]]; then
         docker_cmd="sudo docker"
         print_status "Using sudo for Docker commands"
     fi
@@ -387,14 +550,8 @@ pre_pull_images() {
 build_flask_image() {
     print_status "Building Flask application Docker image..."
     
-    # Use appropriate docker-compose command
-    local compose_cmd="docker-compose"
-    if ! docker-compose --version &>/dev/null; then
-        compose_cmd="sudo docker-compose"
-    fi
-    
-    # Build the Flask app image
-    $compose_cmd build flask-media-manager
+    # Use the determined compose command
+    $COMPOSE_CMD build flask-media-manager
     
     print_success "Flask application image built successfully"
 }
@@ -403,18 +560,9 @@ build_flask_image() {
 start_services() {
     print_status "Starting Docker services..."
     
-    # Determine which docker-compose command to use
-    local compose_cmd="docker-compose"
-    if ! docker-compose ps &>/dev/null 2>&1; then
-        if sudo docker-compose ps &>/dev/null 2>&1; then
-            compose_cmd="sudo docker-compose"
-            print_status "Using sudo for docker-compose commands"
-        fi
-    fi
-    
     # Start services
     print_status "Starting Jellyfin and Flask Media Manager..."
-    $compose_cmd up -d
+    $COMPOSE_CMD up -d
     
     print_success "Services started successfully!"
 }
@@ -423,13 +571,7 @@ start_services() {
 show_status() {
     print_status "Service Status:"
     
-    # Use appropriate docker-compose command
-    local compose_cmd="docker-compose"
-    if ! docker-compose ps &>/dev/null 2>&1; then
-        compose_cmd="sudo docker-compose"
-    fi
-    
-    $compose_cmd ps
+    $COMPOSE_CMD ps
     
     echo ""
     print_status "Service URLs:"
@@ -471,7 +613,7 @@ wait_for_services() {
     
     if [ "$flask_ready" = false ]; then
         print_warning "Flask Media Manager may not be ready yet (timeout after 2 minutes)"
-        print_status "You can check logs with: docker-compose logs flask-media-manager"
+        print_status "You can check logs with: $COMPOSE_CMD logs flask-media-manager"
     fi
     
     # Wait for Jellyfin
@@ -492,7 +634,7 @@ wait_for_services() {
     
     if [ "$jellyfin_ready" = false ]; then
         print_warning "Jellyfin may not be ready yet (timeout after 2 minutes)"
-        print_status "You can check logs with: docker-compose logs jellyfin"
+        print_status "You can check logs with: $COMPOSE_CMD logs jellyfin"
     fi
     
     echo # New line after dots
@@ -505,6 +647,8 @@ show_instructions() {
     print_success "🎉 SETUP COMPLETE! 🎉"
     echo "============================================"
     echo ""
+    echo "🖥️  System: $DISTRO_FAMILY-based ($DISTRO)"
+    echo "🐳 Docker: $COMPOSE_CMD"
     echo "📋 Your media server is now running!"
     echo ""
     echo "🌐 ACCESS YOUR SERVICES:"
@@ -540,19 +684,19 @@ show_instructions() {
     echo "3. 🔑 OPTIONAL - JELLYFIN API INTEGRATION:"
     echo "   • In Jellyfin: Dashboard → API Keys → Create new key"
     echo "   • Edit docker-compose.yml and set JELLYFIN_API_KEY"
-    echo "   • Restart: docker-compose restart flask-media-manager"
+    echo "   • Restart: $COMPOSE_CMD restart flask-media-manager"
     echo ""
     echo "🛠️  MANAGEMENT COMMANDS:"
-    echo "   • View logs: docker-compose logs -f"
-    echo "   • Stop services: docker-compose down"
-    echo "   • Start services: docker-compose up -d"
-    echo "   • Restart services: docker-compose restart"
-    echo "   • Update: docker-compose pull && docker-compose up -d"
+    echo "   • View logs: $COMPOSE_CMD logs -f"
+    echo "   • Stop services: $COMPOSE_CMD down"
+    echo "   • Start services: $COMPOSE_CMD up -d"
+    echo "   • Restart services: $COMPOSE_CMD restart"
+    echo "   • Update: $COMPOSE_CMD pull && $COMPOSE_CMD up -d"
     echo ""
     echo "📊 SERVICE STATUS:"
-    echo "   • Check status: docker-compose ps"
-    echo "   • Flask logs: docker-compose logs flask-media-manager"
-    echo "   • Jellyfin logs: docker-compose logs jellyfin"
+    echo "   • Check status: $COMPOSE_CMD ps"
+    echo "   • Flask logs: $COMPOSE_CMD logs flask-media-manager"
+    echo "   • Jellyfin logs: $COMPOSE_CMD logs jellyfin"
     echo ""
     echo "🔒 SECURITY NOTES:"
     echo "   • This setup is designed for LOCAL USE ONLY"
@@ -571,7 +715,7 @@ show_instructions() {
         echo "⚠️  DOCKER PERMISSIONS:"
         echo "   • You may need to log out and back in for docker group membership"
         echo "   • Or restart your session/terminal"
-        echo "   • If issues persist, use: sudo docker-compose [command]"
+        echo "   • If issues persist, use: sudo [docker-command]"
         echo ""
     fi
     print_success "🎬 Enjoy your media server! Happy streaming! 🍿"
@@ -580,6 +724,9 @@ show_instructions() {
 # Complete setup process
 complete_setup() {
     print_status "🚀 Starting complete media server setup..."
+    echo ""
+    
+    detect_distro
     echo ""
     
     install_system_deps
@@ -618,84 +765,109 @@ complete_setup() {
     show_instructions
 }
 
-# Main execution
-main() {
-    echo "Starting setup process..."
-    
-    check_docker
-    check_files
-    create_media_dirs
-    generate_secret_key
-    start_services
-    wait_for_services
-    show_status
-    show_instructions
-}
-
 # Main execution with enhanced functionality
 main() {
-    echo "🔧 Running standard management operations..."
-    
-    # For non-setup commands, we still need to check basics
-    if [[ ! -f "docker-compose.yml" ]]; then
-        print_error "docker-compose.yml not found. Run './setup.sh setup' first."
-        exit 1
-    fi
-    
-    # Use appropriate docker-compose command
-    local compose_cmd="docker-compose"
-    if ! docker-compose ps &>/dev/null 2>&1; then
-        compose_cmd="sudo docker-compose"
-    fi
+    # Initialize global variables
+    COMPOSE_CMD=""
+    DISTRO=""
+    DISTRO_FAMILY=""
     
     case "${1:-setup}" in
         setup|install|complete)
             complete_setup
             ;;
         start)
+            if [[ ! -f "docker-compose.yml" ]]; then
+                print_error "docker-compose.yml not found. Run './setup.sh setup' first."
+                exit 1
+            fi
+            detect_distro
+            test_docker
             print_status "Starting services..."
-            $compose_cmd up -d
+            $COMPOSE_CMD up -d
             wait_for_services
             show_status
             ;;
         stop)
+            if [[ ! -f "docker-compose.yml" ]]; then
+                print_error "docker-compose.yml not found. Run './setup.sh setup' first."
+                exit 1
+            fi
+            detect_distro
+            test_docker
             print_status "Stopping services..."
-            $compose_cmd down
+            $COMPOSE_CMD down
             print_success "Services stopped"
             ;;
         restart)
+            if [[ ! -f "docker-compose.yml" ]]; then
+                print_error "docker-compose.yml not found. Run './setup.sh setup' first."
+                exit 1
+            fi
+            detect_distro
+            test_docker
             print_status "Restarting services..."
-            $compose_cmd restart
+            $COMPOSE_CMD restart
             wait_for_services
             print_success "Services restarted"
             ;;
         status)
+            if [[ ! -f "docker-compose.yml" ]]; then
+                print_error "docker-compose.yml not found. Run './setup.sh setup' first."
+                exit 1
+            fi
+            detect_distro
+            test_docker
             show_status
             ;;
         logs)
+            if [[ ! -f "docker-compose.yml" ]]; then
+                print_error "docker-compose.yml not found. Run './setup.sh setup' first."
+                exit 1
+            fi
+            detect_distro
+            test_docker
             if [[ -n "${2:-}" ]]; then
                 print_status "Showing logs for ${2}..."
-                $compose_cmd logs -f "$2"
+                $COMPOSE_CMD logs -f "$2"
             else
                 print_status "Showing all service logs..."
-                $compose_cmd logs -f
+                $COMPOSE_CMD logs -f
             fi
             ;;
         update)
+            if [[ ! -f "docker-compose.yml" ]]; then
+                print_error "docker-compose.yml not found. Run './setup.sh setup' first."
+                exit 1
+            fi
+            detect_distro
+            test_docker
             print_status "Updating containers..."
-            $compose_cmd pull
-            $compose_cmd up -d --build
+            $COMPOSE_CMD pull
+            $COMPOSE_CMD up -d --build
             wait_for_services
             print_success "Containers updated"
             ;;
         rebuild)
+            if [[ ! -f "docker-compose.yml" ]]; then
+                print_error "docker-compose.yml not found. Run './setup.sh setup' first."
+                exit 1
+            fi
+            detect_distro
+            test_docker
             print_status "Rebuilding Flask application..."
-            $compose_cmd build --no-cache flask-media-manager
-            $compose_cmd up -d flask-media-manager
+            $COMPOSE_CMD build --no-cache flask-media-manager
+            $COMPOSE_CMD up -d flask-media-manager
             wait_for_services
             print_success "Flask application rebuilt"
             ;;
         clean)
+            if [[ ! -f "docker-compose.yml" ]]; then
+                print_error "docker-compose.yml not found. Nothing to clean."
+                exit 1
+            fi
+            detect_distro
+            test_docker
             print_warning "This will remove all containers and volumes!"
             print_warning "Your media files in /mnt/media will NOT be deleted."
             print_warning "But Jellyfin config and Flask user data WILL be lost!"
@@ -704,9 +876,13 @@ main() {
             echo
             if [[ $REPLY == "yes" ]]; then
                 print_status "Stopping and removing containers..."
-                $compose_cmd down -v
+                $COMPOSE_CMD down -v
                 print_status "Removing unused Docker resources..."
-                if docker system prune -f &>/dev/null || sudo docker system prune -f &>/dev/null; then
+                local docker_cmd="docker"
+                if [[ -n "${docker_permission_issue:-}" ]]; then
+                    docker_cmd="sudo docker"
+                fi
+                if $docker_cmd system prune -f &>/dev/null; then
                     print_success "Cleanup complete"
                     echo ""
                     print_status "To rebuild everything, run: ./setup.sh setup"
@@ -725,6 +901,7 @@ main() {
             ;;
         check-deps)
             print_status "Checking system dependencies..."
+            detect_distro
             install_system_deps
             test_docker
             print_success "Dependencies check complete"
@@ -759,6 +936,11 @@ main() {
             echo "  ./setup.sh status     # Check if services are running"
             echo "  ./setup.sh logs flask-media-manager  # View Flask app logs"
             echo "  ./setup.sh restart    # Restart all services"
+            echo ""
+            echo "🖥️  SUPPORTED SYSTEMS:"
+            echo "  • Debian/Ubuntu (and derivatives like Pop!_OS, Linux Mint)"
+            echo "  • Arch Linux (and derivatives like Manjaro, EndeavourOS)"
+            echo "  • Automatic distribution detection and package manager selection"
             echo ""
             exit 1
             ;;

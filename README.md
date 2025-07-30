@@ -1,6 +1,10 @@
 # Home Cloud Media Server
 
-A complete Docker-based media server solution combining Jellyfin media server with a custom Flask media management web application. Designed for local home network use on Arch Linux.
+A complete Docker-based media server solution combining Jellyfin media server with a custom Flask media management web application. Designed for local home network use on Arch Linux adn Debian.
+
+## Architecture
+![System Architecture](skeleton.png)
+
 
 ## 🌟 Features
 
