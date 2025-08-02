@@ -4,7 +4,7 @@ services:
   jellyfin:
     image: jellyfin/jellyfin:latest
     container_name: jellyfin
-    restart: unless-stopped
+    restart: always
     ports:
       - "8096:8096"
     volumes:
@@ -21,7 +21,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: flask-media-manager
-    restart: unless-stopped
+    restart: always
     ports:
       - "5000:5000"
     volumes:

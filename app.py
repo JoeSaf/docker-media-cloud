@@ -227,6 +227,20 @@ def get_all_folder_paths(base_path, max_depth=5):
     nested_structure = get_nested_folder_structure(base_path, max_depth)
     return collect_paths(nested_structure)
 
+def get_file_info(file_path):
+    """Return file size and modification time for a given file path"""
+    try:
+        stat = os.stat(file_path)
+        return {
+            'size': stat.st_size,
+            'modified': datetime.fromtimestamp(stat.st_mtime)
+        }
+    except Exception:
+        return {
+            'size': 0,
+            'modified': datetime.fromtimestamp(0)
+        }
+
 def scan_media_files(base_path, folder_path=''):
     """Recursively scan media files in a directory"""
     media_files = []
