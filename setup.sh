@@ -360,15 +360,12 @@ services:
       # Persistent storage for user data and thumbnails
       - flask_data:/app/data
       - flask_thumbnails:/app/static/thumbnails
-      # Transcoding directory (for video conversion)
-      - transcoded_videos:/tmp/transcoded
     environment:
       - SECRET_KEY=$SECRET_KEY
       - JELLYFIN_URL=http://jellyfin:8096
       - JELLYFIN_API_KEY=  # Set this after configuring Jellyfin
       - FLASK_ENV=production
       - PYTHONUNBUFFERED=1
-      - ENABLE_TRANSCODING=true  # Enable video transcoding
     depends_on:
       - jellyfin
     networks:
@@ -376,9 +373,8 @@ services:
     # Ensure media directories exist with correct permissions
     command: >
       bash -c "
-        mkdir -p /mnt/media/Pictures /mnt/media/Movies /mnt/media/Music /tmp/transcoded &&
+        mkdir -p /mnt/media/Pictures /mnt/media/Movies /mnt/media/Music &&
         chown -R 1000:1000 /mnt/media &&
-        chmod 755 /tmp/transcoded &&
         python app.py
       "
 
@@ -390,8 +386,6 @@ volumes:
   flask_data:
     driver: local
   flask_thumbnails:
-    driver: local
-  transcoded_videos:
     driver: local
 
 networks:

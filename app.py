@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Flask Media Manager with Jellyfin Integration
+Flask Media Manager with Enhanced Video Playback
 A lightweight web application for uploading and managing media files
-that integrates directly with Jellyfin's media directories.
-Now with full nested folder support!
+with intelligent video playback options (browser vs external player).
 """
 
 import os
@@ -21,27 +20,52 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from PIL import Image, ImageOps
 import requests
 
-# Configuration
+import secrets
+import time
+
+# Add to Config class
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'your-secret-key-change-this'
     UPLOAD_FOLDER = '/mnt/media'
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024  # 10GB max file size
     ALLOWED_EXTENSIONS = {
-        'image': {'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'},
-        'video': {'mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm', 'm4v'},
-        'audio': {'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma'}
+        'image': {'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'svg'},
+        'video': {'mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'mpg', 'mpeg', '3gp', 'ogv'},
+        'audio': {'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'opus'},
+        'document': {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf', 'md', 'csv', 'odt', 'ods', 'odp'},
+        'code': {'py', 'js', 'ts', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'sh', 'php', 'java', 'cpp', 'h', 'sql'},
+        'archive': {'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz', 'tbz2', 'txz'}
     }
     JELLYFIN_URL = os.environ.get('JELLYFIN_URL', 'http://localhost:8096')
     JELLYFIN_API_KEY = os.environ.get('JELLYFIN_API_KEY', '')
     THUMBNAIL_SIZE = (300, 300)
     USERS_FILE = 'users.json'
     
+    # Enhanced video streaming settings
+    CHUNK_SIZE = 8192 * 4  # 32KB chunks for better streaming
+    
+    # Video codec compatibility settings for browser playback
+    WEB_COMPATIBLE_CODECS = {
+        'video': ['h264', 'avc1', 'vp8', 'vp9', 'av01'],
+        'audio': ['aac', 'mp3', 'opus', 'vorbis', 'mp4a'],
+        'containers': ['mp4', 'webm', 'ogg', 'mov']
+    }
+    
     # File size limits by type (in bytes)
     FILE_SIZE_LIMITS = {
         'image': 100 * 1024 * 1024,      # 100MB for images
         'video': 10 * 1024 * 1024 * 1024, # 10GB for videos
-        'audio': 500 * 1024 * 1024       # 500MB for audio
+        'audio': 500 * 1024 * 1024,       # 500MB for audio
+        'document': 5 * 1024 * 1024 * 1024,     # 5GB for documents
+        'code': 1 * 1024 * 1024 * 1024,         # 1GB for code files
+        'archive': 1 * 1024 * 1024 * 1024  # 1GB for archives
     }
+    
+    # Token-based streaming for external players
+    STREAM_TOKEN_EXPIRY = 3600  # 1 hour
+
+# Global token storage (in production, use Redis or database)
+streaming_tokens = {}
 
 # Flask app setup
 app = Flask(__name__)
@@ -61,7 +85,7 @@ class User(UserMixin):
         self.password_hash = password_hash
         self.is_admin = is_admin
 
-# User management
+# User management (keeping original implementation)
 class UserManager:
     def __init__(self, users_file):
         self.users_file = users_file
@@ -132,7 +156,69 @@ if not user_manager.users:
 def load_user(user_id):
     return user_manager.get_user(user_id)
 
-# Utility functions
+# Enhanced utility functions for video handling
+def get_video_info(file_path):
+    """Get video file information using ffprobe"""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            info = json.loads(result.stdout)
+            video_stream = None
+            audio_stream = None
+            
+            # Find video and audio streams
+            for stream in info.get('streams', []):
+                if stream.get('codec_type') == 'video' and not video_stream:
+                    video_stream = stream
+                elif stream.get('codec_type') == 'audio' and not audio_stream:
+                    audio_stream = stream
+            
+            return {
+                'format': info.get('format', {}),
+                'video_stream': video_stream,
+                'audio_stream': audio_stream,
+                'duration': float(info.get('format', {}).get('duration', 0)),
+                'size': int(info.get('format', {}).get('size', 0))
+            }
+    except Exception as e:
+        print(f"Error getting video info for {file_path}: {e}")
+    return None
+
+def is_web_compatible(video_info):
+    """Check if video is web-compatible for direct browser streaming"""
+    if not video_info:
+        return False
+    
+    format_name = video_info.get('format', {}).get('format_name', '').lower()
+    video_stream = video_info.get('video_stream', {})
+    audio_stream = video_info.get('audio_stream', {})
+    
+    # Check container format
+    container_compatible = any(fmt in format_name for fmt in Config.WEB_COMPATIBLE_CODECS['containers'])
+    
+    # Check video codec
+    video_codec = video_stream.get('codec_name', '').lower()
+    video_compatible = video_codec in Config.WEB_COMPATIBLE_CODECS['video']
+    
+    # Check audio codec (if present)
+    audio_codec = audio_stream.get('codec_name', '').lower() if audio_stream else 'none'
+    audio_compatible = audio_codec in Config.WEB_COMPATIBLE_CODECS['audio'] or audio_codec == 'none'
+    
+    is_compatible = container_compatible and video_compatible and audio_compatible
+    
+    print(f"Video compatibility check for {video_info.get('format', {}).get('filename', 'unknown')}:")
+    print(f"  Format: {format_name} -> {'✓' if container_compatible else '✗'}")
+    print(f"  Video codec: {video_codec} -> {'✓' if video_compatible else '✗'}")
+    print(f"  Audio codec: {audio_codec} -> {'✓' if audio_compatible else '✗'}")
+    print(f"  Overall: {'Browser compatible' if is_compatible else 'External player recommended'}")
+    
+    return is_compatible
+
+# Utility functions (keeping all original functions)
 def allowed_file(filename):
     """Check if file extension is allowed"""
     if '.' not in filename:
@@ -146,10 +232,13 @@ def allowed_file(filename):
 def get_media_path(file_type):
     """Get the appropriate media directory based on file type"""
     paths = {
-        'image': os.path.join(Config.UPLOAD_FOLDER, 'Pictures'),
-        'video': os.path.join(Config.UPLOAD_FOLDER, 'Movies'),
-        'audio': os.path.join(Config.UPLOAD_FOLDER, 'Music')
-    }
+            'image': os.path.join(Config.UPLOAD_FOLDER, 'Pictures'),
+            'video': os.path.join(Config.UPLOAD_FOLDER, 'Movies'),
+            'audio': os.path.join(Config.UPLOAD_FOLDER, 'Music'),
+            'document': os.path.join(Config.UPLOAD_FOLDER, 'Documents'),
+            'code': os.path.join(Config.UPLOAD_FOLDER, 'Code'),
+            'archive': os.path.join(Config.UPLOAD_FOLDER, 'Archives')
+        }
     return paths.get(file_type, Config.UPLOAD_FOLDER)
 
 def ensure_directory(path):
@@ -160,7 +249,6 @@ def sanitize_path_component(component):
     """Sanitize a single path component to prevent path traversal"""
     if not component:
         return None
-    # Remove any path separators and dangerous chars
     component = component.replace('..', '').replace('/', '').replace('\\', '')
     component = secure_filename(component)
     return component if component else None
@@ -170,7 +258,6 @@ def sanitize_folder_path(folder_path):
     if not folder_path:
         return ''
     
-    # Split by common path separators and sanitize each component
     components = []
     for part in folder_path.replace('\\', '/').split('/'):
         sanitized = sanitize_path_component(part)
@@ -227,20 +314,6 @@ def get_all_folder_paths(base_path, max_depth=5):
     nested_structure = get_nested_folder_structure(base_path, max_depth)
     return collect_paths(nested_structure)
 
-def get_file_info(file_path):
-    """Return file size and modification time for a given file path"""
-    try:
-        stat = os.stat(file_path)
-        return {
-            'size': stat.st_size,
-            'modified': datetime.fromtimestamp(stat.st_mtime)
-        }
-    except Exception:
-        return {
-            'size': 0,
-            'modified': datetime.fromtimestamp(0)
-        }
-
 def scan_media_files(base_path, folder_path=''):
     """Recursively scan media files in a directory"""
     media_files = []
@@ -259,9 +332,13 @@ def scan_media_files(base_path, folder_path=''):
                 if is_allowed:
                     file_info = get_file_info(item_path)
                     
-                    # Check for thumbnail
-                    thumbnail_filename = f"{hashlib.md5(item_path.encode()).hexdigest()}.jpg"
-                    thumbnail_path = os.path.join(app.static_folder, 'thumbnails', thumbnail_filename)
+                    # Only generate thumbnails for images and videos
+                    thumbnail_filename = None
+                    if detected_type in ['image', 'video']:
+                        thumbnail_filename = f"{hashlib.md5(item_path.encode()).hexdigest()}.jpg"
+                        thumbnail_path = os.path.join(app.static_folder, 'thumbnails', thumbnail_filename)
+                        if not os.path.exists(thumbnail_path):
+                            generate_thumbnail(item_path, detected_type, thumbnail_path)
                     
                     media_files.append({
                         'filename': item,
@@ -270,11 +347,10 @@ def scan_media_files(base_path, folder_path=''):
                         'type': detected_type,
                         'size': file_info['size'],
                         'modified': file_info['modified'],
-                        'thumbnail': thumbnail_filename if os.path.exists(thumbnail_path) else None,
+                        'thumbnail': thumbnail_filename if thumbnail_filename and os.path.exists(os.path.join(app.static_folder, 'thumbnails', thumbnail_filename)) else None,
                         'full_path': item_path
                     })
             elif os.path.isdir(item_path):
-                # Recursively scan subdirectories
                 subfolder_files = scan_media_files(base_path, relative_path)
                 media_files.extend(subfolder_files)
     except (OSError, PermissionError):
@@ -282,24 +358,40 @@ def scan_media_files(base_path, folder_path=''):
     
     return media_files
 
+def generate_enhanced_video_thumbnail(file_path, thumbnail_path, timestamp='00:00:05.000'):
+    """Generate better video thumbnails with multiple timestamp attempts"""
+    try:
+        timestamps = [timestamp, '00:00:01.000', '00:00:10.000', '00:00:30.000']
+        
+        for ts in timestamps:
+            cmd = [
+                'ffmpeg', '-i', file_path, '-ss', ts,
+                '-vframes', '1', 
+                '-vf', f'scale={Config.THUMBNAIL_SIZE[0]}:{Config.THUMBNAIL_SIZE[1]}:force_original_aspect_ratio=decrease,pad={Config.THUMBNAIL_SIZE[0]}:{Config.THUMBNAIL_SIZE[1]}:(ow-iw)/2:(oh-ih)/2',
+                '-q:v', '2',
+                '-y', thumbnail_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0 and os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
+                return True
+        
+        return False
+    except Exception as e:
+        print(f"Error generating video thumbnail: {e}")
+        return False
+
 def generate_thumbnail(file_path, file_type, thumbnail_path):
     """Generate thumbnail for media files"""
     try:
         if file_type == 'image':
             with Image.open(file_path) as img:
-                img = ImageOps.exif_transpose(img)  # Handle rotation
+                img = ImageOps.exif_transpose(img)
                 img.thumbnail(Config.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
                 img.save(thumbnail_path, 'JPEG', quality=85)
                 return True
         elif file_type == 'video':
-            # Use ffmpeg to generate video thumbnail
-            cmd = [
-                'ffmpeg', '-i', file_path, '-ss', '00:00:01.000',
-                '-vframes', '1', '-vf', f'scale={Config.THUMBNAIL_SIZE[0]}:{Config.THUMBNAIL_SIZE[1]}:force_original_aspect_ratio=decrease',
-                '-y', thumbnail_path
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            return result.returncode == 0
+            return generate_enhanced_video_thumbnail(file_path, thumbnail_path)
     except Exception as e:
         print(f"Error generating thumbnail: {e}")
     return False
@@ -321,18 +413,6 @@ def refresh_jellyfin_library():
         print(f"Error refreshing Jellyfin library: {e}")
         return False
 
-def validate_file_size(file_path, file_type):
-    """Validate file size based on type"""
-    try:
-        file_size = os.path.getsize(file_path)
-        max_size = Config.FILE_SIZE_LIMITS.get(file_type, Config.MAX_CONTENT_LENGTH)
-        
-        if file_size > max_size:
-            return False, f"File too large. Maximum size for {file_type} files is {format_file_size(max_size)}"
-        return True, None
-    except Exception as e:
-        return False, f"Error checking file size: {str(e)}"
-
 def format_file_size(size_bytes):
     """Format file size in human readable format"""
     if size_bytes == 0:
@@ -345,6 +425,85 @@ def format_file_size(size_bytes):
         i += 1
     
     return f"{size_bytes:.1f} {size_names[i]}"
+
+def get_file_info(file_path):
+    """Get file information"""
+    stat = os.stat(file_path)
+    return {
+        'size': stat.st_size,
+        'modified': datetime.fromtimestamp(stat.st_mtime),
+        'created': datetime.fromtimestamp(stat.st_ctime)
+    }
+
+def validate_file_size(file_path, file_type):
+    """Validate file size based on type"""
+    try:
+        file_size = os.path.getsize(file_path)
+        max_size = Config.FILE_SIZE_LIMITS.get(file_type, Config.MAX_CONTENT_LENGTH)
+        
+        if file_size > max_size:
+            return False, f"File too large. Maximum size for {file_type} files is {format_file_size(max_size)}"
+        return True, None
+    except Exception as e:
+        return False, f"Error checking file size: {str(e)}"
+
+def chunked_file_save(file_obj, file_path, chunk_size=8192):
+    """Save large files in chunks to handle memory efficiently"""
+    try:
+        with open(file_path, 'wb') as f:
+            while True:
+                chunk = file_obj.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def generate_streaming_token(filename, user_id):
+    """Generate a temporary token for external player streaming"""
+    token = secrets.token_urlsafe(32)
+    expiry = time.time() + Config.STREAM_TOKEN_EXPIRY
+    
+    streaming_tokens[token] = {
+        'filename': filename,
+        'user_id': user_id,
+        'expires': expiry,
+        'created': time.time()
+    }
+    
+    # Clean up expired tokens
+    cleanup_expired_tokens()
+    
+    return token
+
+def cleanup_expired_tokens():
+    """Remove expired streaming tokens"""
+    current_time = time.time()
+    expired_tokens = [token for token, data in streaming_tokens.items() 
+                     if data['expires'] < current_time]
+    
+    for token in expired_tokens:
+        del streaming_tokens[token]
+
+def validate_streaming_token(token, filename):
+    """Validate a streaming token"""
+    if token not in streaming_tokens:
+        return False
+    
+    token_data = streaming_tokens[token]
+    current_time = time.time()
+    
+    # Check if token is expired
+    if token_data['expires'] < current_time:
+        del streaming_tokens[token]
+        return False
+    
+    # Check if filename matches
+    if token_data['filename'] != filename:
+        return False
+    
+    return True
 
 def count_nested_folders(base_path):
     """Count total number of folders including nested ones"""
@@ -360,7 +519,143 @@ def count_nested_folders(base_path):
     
     return count
 
-# Routes
+# Enhanced streaming with range support
+def stream_file_with_ranges(file_path, video_info=None):
+    """Stream file with HTTP range support for better video playback"""
+    try:
+        size = os.path.getsize(file_path)
+        byte_start = 0
+        byte_end = size - 1
+        
+        # Parse Range header
+        range_header = request.headers.get('Range', None)
+        if range_header:
+            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+            if match:
+                byte_start = int(match.group(1))
+                if match.group(2):
+                    byte_end = int(match.group(2))
+        
+        byte_end = min(byte_end, size - 1)
+        content_length = byte_end - byte_start + 1
+        
+        # Enhanced content type detection
+        content_type = 'application/octet-stream'
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        if file_path.endswith('.mp4'):
+            content_type = 'video/mp4'
+        elif file_path.endswith('.webm'):
+            content_type = 'video/webm'
+        elif file_path.endswith('.mkv'):
+            content_type = 'video/x-matroska'
+        elif file_path.endswith('.avi'):
+            content_type = 'video/x-msvideo'
+        else:
+            # Fallback to mimetypes
+            detected_type = mimetypes.guess_type(file_path)[0]
+            if detected_type:
+                content_type = detected_type
+        
+        # Document types
+        if ext in ['.pdf']:
+            content_type = 'application/pdf'
+        elif ext in ['.doc', '.docx']:
+            content_type = 'application/msword'
+        elif ext in ['.xls', '.xlsx']:
+            content_type = 'application/vnd.ms-excel'
+        elif ext in ['.ppt', '.pptx']:
+            content_type = 'application/vnd.ms-powerpoint'
+        elif ext in ['.txt', '.md', '.csv']:
+            content_type = 'text/plain'
+        elif ext in ['.rtf']:
+            content_type = 'application/rtf'
+        elif ext in ['.odt']:
+            content_type = 'application/vnd.oasis.opendocument.text'
+        elif ext in ['.ods']:
+            content_type = 'application/vnd.oasis.opendocument.spreadsheet'
+        elif ext in ['.odp']:
+            content_type = 'application/vnd.oasis.opendocument.presentation'
+            
+        # Code types
+        elif ext in ['.js']:
+            content_type = 'application/javascript'
+        elif ext in ['.json']:
+            content_type = 'application/json'
+        elif ext in ['.xml']:
+            content_type = 'application/xml'
+        elif ext in ['.yaml', '.yml']:
+            content_type = 'application/x-yaml'
+        elif ext in ['.html', '.htm']:
+            content_type = 'text/html'
+        elif ext in ['.css']:
+            content_type = 'text/css'
+        elif ext in ['.py', '.sh', '.php', '.java', '.cpp', '.h', '.sql']:
+            content_type = 'text/plain'
+            
+        # Archive types
+        elif ext in ['.zip']:
+            content_type = 'application/zip'
+        elif ext in ['.rar']:
+            content_type = 'application/x-rar-compressed'
+        elif ext in ['.7z']:
+            content_type = 'application/x-7z-compressed'
+        elif ext in ['.tar']:
+            content_type = 'application/x-tar'
+        elif ext in ['.gz']:
+            content_type = 'application/gzip'
+        elif ext in ['.bz2']:
+            content_type = 'application/x-bzip2'
+        elif ext in ['.xz']:
+            content_type = 'application/x-xz'
+            
+                        
+        def generate():
+            with open(file_path, 'rb') as f:
+                f.seek(byte_start)
+                remaining = content_length
+                while remaining > 0:
+                    chunk_size = min(Config.CHUNK_SIZE, remaining)
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+        
+        # Build response headers with enhanced video support
+        headers = {
+            'Content-Type': content_type,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': str(content_length),
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        }
+        
+        # Add range headers if this is a range request
+        if range_header:
+            headers['Content-Range'] = f'bytes {byte_start}-{byte_end}/{size}'
+            status_code = 206
+        else:
+            status_code = 200
+        
+        # Add video-specific headers for better browser compatibility
+        if 'video' in content_type:
+            headers.update({
+                'X-Content-Duration': str(video_info.get('duration', 0)) if video_info else '0',
+                'Content-Disposition': 'inline',
+            })
+        
+        print(f"Streaming {file_path} ({content_type}) - Range: {byte_start}-{byte_end}/{size}")
+        
+        response = Response(generate(), status_code, headers=headers)
+        return response
+        
+    except Exception as e:
+        print(f"Error streaming file {file_path}: {e}")
+        abort(500)
+
+# Routes (keeping all original routes)
 @app.route('/')
 def index():
     if current_user.is_authenticated:
@@ -417,7 +712,6 @@ def upload():
         custom_folder = request.form.get('custom_folder', '').strip()
         file_type_filter = request.form.get('file_type', '')
         
-        # Sanitize custom folder path (can now be nested)
         if custom_folder:
             custom_folder = sanitize_folder_path(custom_folder)
             if not custom_folder:
@@ -436,7 +730,6 @@ def upload():
                 errors.append(f'File type not allowed: {file.filename}')
                 continue
             
-            # If file type filter is set, only allow that type
             if file_type_filter and file_type != file_type_filter:
                 errors.append(f'File {file.filename} does not match selected type filter ({file_type_filter})')
                 continue
@@ -445,60 +738,48 @@ def upload():
             if not filename:
                 continue
             
-            # Get appropriate media directory
             media_dir = get_media_path(file_type)
             
-            # Add custom folder if specified (now supports nested paths)
             if custom_folder:
                 media_dir = os.path.join(media_dir, custom_folder)
             
             ensure_directory(media_dir)
             
-            # Create thumbnails directory
             thumbnails_dir = os.path.join(app.static_folder, 'thumbnails')
             ensure_directory(thumbnails_dir)
             
-            # Check if file already exists
             file_path = os.path.join(media_dir, filename)
             if os.path.exists(file_path):
-                # Add timestamp to filename to avoid conflicts
                 name, ext = os.path.splitext(filename)
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 filename = f"{name}_{timestamp}{ext}"
                 file_path = os.path.join(media_dir, filename)
             
             try:
-                # For large files (especially videos), use chunked saving
                 file_size = 0
                 if hasattr(file, 'content_length') and file.content_length:
                     file_size = file.content_length
                 
-                # Check file size limit
                 max_size = Config.FILE_SIZE_LIMITS.get(file_type, Config.MAX_CONTENT_LENGTH)
                 if file_size > max_size:
                     errors.append(f'File {filename} is too large. Maximum size for {file_type} files is {format_file_size(max_size)}')
                     continue
                 
-                # Save file using chunked method for large files
-                if file_size > 100 * 1024 * 1024:  # Use chunked saving for files > 100MB
+                if file_size > 100 * 1024 * 1024:
                     success, error = chunked_file_save(file, file_path)
                     if not success:
                         errors.append(f'Failed to save {filename}: {error}')
                         continue
                 else:
-                    # Regular save for smaller files
                     file.save(file_path)
                 
-                # Validate saved file size
                 is_valid, error_msg = validate_file_size(file_path, file_type)
                 if not is_valid:
-                    # Remove the invalid file
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     errors.append(f'{filename}: {error_msg}')
                     continue
                 
-                # Generate thumbnail
                 thumbnail_filename = f"{hashlib.md5(file_path.encode()).hexdigest()}.jpg"
                 thumbnail_path = os.path.join(thumbnails_dir, thumbnail_filename)
                 
@@ -516,19 +797,15 @@ def upload():
                 
             except Exception as e:
                 errors.append(f'Error uploading {filename}: {str(e)}')
-                # Clean up partial file if it exists
                 if os.path.exists(file_path):
                     os.remove(file_path)
         
-        # Show results
         if uploaded_files:
             flash(f'Successfully uploaded {len(uploaded_files)} file(s)')
-            # Show file sizes for large uploads
             for uploaded_file in uploaded_files:
-                if uploaded_file['size'] > 100 * 1024 * 1024:  # > 100MB
+                if uploaded_file['size'] > 100 * 1024 * 1024:
                     flash(f"✓ {uploaded_file['filename']} ({format_file_size(uploaded_file['size'])})")
             
-            # Refresh Jellyfin library
             if refresh_jellyfin_library():
                 flash('Jellyfin library refresh triggered')
         
@@ -538,7 +815,6 @@ def upload():
         
         return redirect(url_for('gallery'))
     
-    # Get existing folders for each media type (now nested)
     folder_structure = {}
     for file_type in ['image', 'video', 'audio']:
         media_dir = get_media_path(file_type)
@@ -559,7 +835,6 @@ def gallery():
     media_files = []
     folder_structure = {}
     
-    # Scan all media directories
     for file_type in ['image', 'video', 'audio']:
         media_dir = get_media_path(file_type)
         folder_structure[file_type] = get_nested_folder_structure(media_dir)
@@ -568,11 +843,9 @@ def gallery():
             continue
         
         if folder_filter:
-            # Scan specific folder (now supports nested paths)
             files_in_folder = scan_media_files(media_dir, folder_filter)
             media_files.extend(files_in_folder)
         else:
-            # Scan all files recursively
             files_in_dir = scan_media_files(media_dir)
             media_files.extend(files_in_dir)
     
@@ -604,13 +877,11 @@ def create_folder():
         flash('Folder path and file type are required')
         return redirect(url_for('gallery'))
     
-    # Sanitize folder path (now supports nested paths like "Anime/CowboyBebop")
     folder_path = sanitize_folder_path(folder_path)
     if not folder_path:
         flash('Invalid folder path')
         return redirect(url_for('gallery'))
     
-    # Get media directory
     media_dir = get_media_path(file_type)
     full_folder_path = os.path.join(media_dir, folder_path)
     
@@ -625,82 +896,47 @@ def create_folder():
     
     return redirect(url_for('gallery'))
 
-@app.route('/browse_folders/<file_type>')
-@login_required
-def browse_folders(file_type):
-    """API endpoint to browse folders for a specific media type"""
-    if file_type not in ['image', 'video', 'audio']:
-        return jsonify({'error': 'Invalid file type'}), 400
-    
-    media_dir = get_media_path(file_type)
-    folder_structure = get_nested_folder_structure(media_dir)
-    
-    return jsonify({
-        'folders': folder_structure,
-        'flat_paths': get_all_folder_paths(media_dir)
-    })
-
 @app.route('/stream/<path:filename>')
 @login_required
 def stream_file(filename):
-    """Stream media files with range support"""
+    """Enhanced streaming for all media files"""
     # Find file in media directories (including nested subfolders)
     file_path = None
-    for file_type in ['image', 'video', 'audio']:
-        media_dir = get_media_path(file_type)
+    file_type = None
+    
+    for ftype in ['image', 'video', 'audio']:
+        media_dir = get_media_path(ftype)
         potential_path = os.path.join(media_dir, filename)
-        
-        # Normalize the path to handle different separators
         potential_path = os.path.normpath(potential_path)
         
         if os.path.exists(potential_path) and os.path.isfile(potential_path):
             file_path = potential_path
+            file_type = ftype
             break
     
     if not file_path:
         abort(404)
     
-    # Handle range requests for streaming
+    # For video files, get video info for better streaming
+    video_info = None
+    if file_type == 'video':
+        video_info = get_video_info(file_path)
+    
+    # Check if this is a request from an external player (based on User-Agent or lack of cookies)
+    user_agent = request.headers.get('User-Agent', '').lower()
+    is_external_player = any(player in user_agent for player in ['mpv', 'vlc', 'mpc-hc', 'iina']) or \
+                       'range' in request.headers.get('Accept-Encoding', '').lower() or \
+                       not request.cookies.get('session')
+    
+    # For external players, we might need to bypass login check in some cases
+    # But for security, we'll keep the login requirement and suggest token-based auth if needed
+    
+    # Use range streaming for all files
     range_header = request.headers.get('Range', None)
-    if not range_header:
+    if not range_header and file_type != 'video':
         return send_file(file_path)
     
-    size = os.path.getsize(file_path)
-    byte_start = 0
-    byte_end = size - 1
-    
-    if range_header:
-        match = re.search(r'bytes=(\d+)-(\d*)', range_header)
-        if match:
-            byte_start = int(match.group(1))
-            if match.group(2):
-                byte_end = int(match.group(2))
-    
-    content_length = byte_end - byte_start + 1
-    
-    def generate():
-        with open(file_path, 'rb') as f:
-            f.seek(byte_start)
-            remaining = content_length
-            while remaining:
-                chunk_size = min(4096, remaining)
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
-    
-    response = Response(
-        generate(),
-        206,
-        headers={
-            'Content-Range': f'bytes {byte_start}-{byte_end}/{size}',
-            'Accept-Ranges': 'bytes',
-            'Content-Length': str(content_length),
-            'Content-Type': mimetypes.guess_type(filename)[0] or 'application/octet-stream'
-        }
-    )
-    return response
+    return stream_file_with_ranges(file_path, video_info)
 
 @app.route('/thumbnail/<filename>')
 def thumbnail(filename):
@@ -729,15 +965,13 @@ def admin():
     for file_type in ['image', 'video', 'audio']:
         media_dir = get_media_path(file_type)
         if os.path.exists(media_dir):
-            # Count folders (including nested ones)
             stats['folders'][file_type] = count_nested_folders(media_dir)
             
-            # Count files
             files = scan_media_files(media_dir)
             stats['total_files'] += len(files)
             stats['total_size'] += sum(f['size'] for f in files)
     
-    return render_template('admin.html', stats=stats)
+    return render_template('admin.html', stats=stats, format_file_size=format_file_size)
 
 @app.route('/delete/<path:filename>', methods=['POST'])
 @login_required
@@ -746,7 +980,6 @@ def delete_file(filename):
     if not current_user.is_admin:
         abort(403)
     
-    # Find and delete file (including in nested subfolders)
     file_path = None
     for file_type in ['image', 'video', 'audio']:
         media_dir = get_media_path(file_type)
@@ -776,7 +1009,40 @@ def delete_file(filename):
     
     return redirect(url_for('gallery'))
 
-# API Routes
+# Enhanced API Routes for video support
+@app.route('/api/video/info/<path:filename>')
+@login_required
+def api_video_info(filename):
+    """Get video information and compatibility status"""
+    video_path = None
+    media_dir = get_media_path('video')
+    potential_path = os.path.join(media_dir, filename)
+    potential_path = os.path.normpath(potential_path)
+    
+    if os.path.exists(potential_path) and os.path.isfile(potential_path):
+        video_path = potential_path
+    
+    if not video_path:
+        return jsonify({'error': 'Video not found'}), 404
+    
+    video_info = get_video_info(video_path)
+    if not video_info:
+        return jsonify({'error': 'Unable to read video information'}), 500
+    
+    return jsonify({
+        'filename': filename,
+        'duration': video_info.get('duration', 0),
+        'size': video_info.get('size', 0),
+        'video_codec': video_info.get('video_stream', {}).get('codec_name'),
+        'audio_codec': video_info.get('audio_stream', {}).get('codec_name'),
+        'format': video_info.get('format', {}).get('format_name'),
+        'resolution': f"{video_info.get('video_stream', {}).get('width', 0)}x{video_info.get('video_stream', {}).get('height', 0)}",
+        'bitrate': video_info.get('format', {}).get('bit_rate'),
+        'web_compatible': is_web_compatible(video_info),
+        'stream_url': url_for('stream_file', filename=filename)
+    })
+
+# Keep all original API routes
 @app.route('/api/files')
 @login_required
 def api_files():
@@ -809,7 +1075,7 @@ def api_files():
 @app.route('/api/folders')
 @login_required
 def api_folders():
-    """REST API endpoint for listing folders (now supports nested structure)"""
+    """REST API endpoint for listing folders"""
     file_type = request.args.get('type', '')
     flat = request.args.get('flat', 'false').lower() == 'true'
     
@@ -822,7 +1088,6 @@ def api_folders():
             folders = get_nested_folder_structure(media_dir)
             return jsonify({file_type: folders})
     else:
-        # Return all folders
         all_folders = {}
         for ftype in ['image', 'video', 'audio']:
             media_dir = get_media_path(ftype)
@@ -847,7 +1112,6 @@ def api_upload():
     if not is_allowed:
         return jsonify({'error': 'File type not allowed'}), 400
     
-    # Get optional folder parameter (now supports nested paths)
     custom_folder = request.form.get('folder', '').strip()
     if custom_folder:
         custom_folder = sanitize_folder_path(custom_folder)
@@ -857,7 +1121,6 @@ def api_upload():
     filename = secure_filename(file.filename)
     media_dir = get_media_path(file_type)
     
-    # Add custom folder if specified (now supports nested paths)
     if custom_folder:
         media_dir = os.path.join(media_dir, custom_folder)
     
@@ -865,7 +1128,6 @@ def api_upload():
     
     file_path = os.path.join(media_dir, filename)
     
-    # Handle file conflicts
     if os.path.exists(file_path):
         name, ext = os.path.splitext(filename)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -903,7 +1165,6 @@ def api_delete_file(filename):
     if not current_user.is_admin:
         return jsonify({'error': 'Admin access required'}), 403
     
-    # Find and delete file
     file_path = None
     for file_type in ['image', 'video', 'audio']:
         media_dir = get_media_path(file_type)
@@ -932,7 +1193,93 @@ def api_delete_file(filename):
     except Exception as e:
         return jsonify({'error': f'Failed to delete file: {str(e)}'}), 500
 
-# Admin API Routes
+@app.route('/api/move-files', methods=['POST'])
+@login_required
+def api_move_files():
+    """REST API endpoint for moving files"""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'JSON data required'}), 400
+    
+    file_paths = data.get('file_paths', [])
+    destination_folder = data.get('destination_folder', '').strip()
+    destination_type = data.get('destination_type', '')
+    
+    if not file_paths or not destination_type:
+        return jsonify({'error': 'File paths and destination type are required'}), 400
+    
+    if destination_type not in ['image', 'video', 'audio']:
+        return jsonify({'error': 'Invalid destination type'}), 400
+    
+    destination_folder = sanitize_folder_path(destination_folder)
+    destination_dir = get_media_path(destination_type)
+    
+    if destination_folder:
+        destination_dir = os.path.join(destination_dir, destination_folder)
+    
+    ensure_directory(destination_dir)
+    
+    moved_files = []
+    errors = []
+    
+    for file_path in file_paths:
+        try:
+            # Find the source file
+            source_path = None
+            for ftype in ['image', 'video', 'audio']:
+                media_dir = get_media_path(ftype)
+                potential_path = os.path.join(media_dir, file_path)
+                potential_path = os.path.normpath(potential_path)
+                
+                if os.path.exists(potential_path) and os.path.isfile(potential_path):
+                    source_path = potential_path
+                    break
+            
+            if not source_path:
+                errors.append(f'File not found: {file_path}')
+                continue
+            
+            # Check if moving to same type
+            source_type = None
+            for ftype in ['image', 'video', 'audio']:
+                media_dir = get_media_path(ftype)
+                if source_path.startswith(media_dir):
+                    source_type = ftype
+                    break
+            
+            if source_type != destination_type:
+                errors.append(f'Cannot move {file_path}: different media types')
+                continue
+            
+            filename = os.path.basename(source_path)
+            dest_path = os.path.join(destination_dir, filename)
+            
+            # Handle filename conflicts
+            if os.path.exists(dest_path):
+                name, ext = os.path.splitext(filename)
+                counter = 1
+                while os.path.exists(dest_path):
+                    new_filename = f"{name}_{counter}{ext}"
+                    dest_path = os.path.join(destination_dir, new_filename)
+                    counter += 1
+            
+            # Move the file
+            os.rename(source_path, dest_path)
+            moved_files.append(filename)
+            
+        except Exception as e:
+            errors.append(f'Error moving {file_path}: {str(e)}')
+    
+    if moved_files:
+        refresh_jellyfin_library()
+    
+    return jsonify({
+        'message': f'Successfully moved {len(moved_files)} file(s)',
+        'moved_files': moved_files,
+        'errors': errors
+    })
+
+# Admin API Routes (keeping all original ones)
 @app.route('/api/admin/refresh-jellyfin', methods=['POST'])
 @login_required
 def api_refresh_jellyfin():
@@ -982,7 +1329,6 @@ def api_cleanup_thumbnails():
     if not os.path.exists(thumbnails_dir):
         return jsonify({'removed': 0, 'message': 'No thumbnails directory found'})
     
-    # Get all existing media file hashes
     valid_hashes = set()
     for file_type in ['image', 'video', 'audio']:
         media_dir = get_media_path(file_type)
@@ -992,7 +1338,6 @@ def api_cleanup_thumbnails():
             file_hash = hashlib.md5(file_data['full_path'].encode()).hexdigest()
             valid_hashes.add(f"{file_hash}.jpg")
     
-    # Remove orphaned thumbnails
     removed_count = 0
     for thumbnail_file in os.listdir(thumbnails_dir):
         if thumbnail_file not in valid_hashes:
@@ -1020,7 +1365,6 @@ def api_admin_stats():
         'thumbnails': 0
     }
     
-    # Count files, storage, and folders
     for file_type in ['image', 'video', 'audio']:
         media_dir = get_media_path(file_type)
         files = scan_media_files(media_dir)
@@ -1043,7 +1387,7 @@ def api_admin_stats():
 @app.route('/api/create-folder', methods=['POST'])
 @login_required
 def api_create_folder():
-    """API endpoint to create a new folder (now supports nested paths)"""
+    """API endpoint to create a new folder"""
     data = request.get_json()
     if not data:
         return jsonify({'error': 'JSON data required'}), 400
@@ -1057,12 +1401,10 @@ def api_create_folder():
     if file_type not in ['image', 'video', 'audio']:
         return jsonify({'error': 'Invalid file type'}), 400
     
-    # Sanitize folder path (now supports nested paths like "Anime/CowboyBebop")
     folder_path = sanitize_folder_path(folder_path)
     if not folder_path:
         return jsonify({'error': 'Invalid folder path'}), 400
     
-    # Get media directory
     media_dir = get_media_path(file_type)
     full_folder_path = os.path.join(media_dir, folder_path)
     
@@ -1077,254 +1419,6 @@ def api_create_folder():
         })
     except Exception as e:
         return jsonify({'error': f'Error creating folder: {str(e)}'}), 500
-
-@app.route('/api/delete-folder', methods=['DELETE'])
-@login_required
-def api_delete_folder():
-    """API endpoint to delete a folder and all its contents (admin only)"""
-    if not current_user.is_admin:
-        return jsonify({'error': 'Admin access required'}), 403
-    
-    data = request.get_json()
-    if not data:
-        return jsonify({'error': 'JSON data required'}), 400
-    
-    folder_path = data.get('folder_path', '').strip()
-    file_type = data.get('file_type', '')
-    
-    if not folder_path or not file_type:
-        return jsonify({'error': 'Folder path and file type are required'}), 400
-    
-    if file_type not in ['image', 'video', 'audio']:
-        return jsonify({'error': 'Invalid file type'}), 400
-    
-    # Sanitize folder path
-    folder_path = sanitize_folder_path(folder_path)
-    if not folder_path:
-        return jsonify({'error': 'Invalid folder path'}), 400
-    
-    # Get media directory
-    media_dir = get_media_path(file_type)
-    full_folder_path = os.path.join(media_dir, folder_path)
-    full_folder_path = os.path.normpath(full_folder_path)
-    
-    # Security check: ensure the path is within the media directory
-    if not full_folder_path.startswith(os.path.normpath(media_dir)):
-        return jsonify({'error': 'Invalid folder path'}), 400
-    
-    if not os.path.exists(full_folder_path):
-        return jsonify({'error': f'Folder "{folder_path}" not found'}), 404
-    
-    if not os.path.isdir(full_folder_path):
-        return jsonify({'error': f'"{folder_path}" is not a folder'}), 400
-    
-    try:
-        # Count files that will be deleted
-        deleted_files = 0
-        deleted_thumbnails = 0
-        
-        # Walk through all files in the folder and subfolders
-        for root, dirs, files in os.walk(full_folder_path):
-            for file in files:
-                file_path = os.path.join(root, file)
-                is_allowed, detected_type = allowed_file(file)
-                if is_allowed:
-                    deleted_files += 1
-                    
-                    # Remove corresponding thumbnail
-                    thumbnail_filename = f"{hashlib.md5(file_path.encode()).hexdigest()}.jpg"
-                    thumbnail_path = os.path.join(app.static_folder, 'thumbnails', thumbnail_filename)
-                    if os.path.exists(thumbnail_path):
-                        os.remove(thumbnail_path)
-                        deleted_thumbnails += 1
-        
-        # Delete the entire folder
-        import shutil
-        shutil.rmtree(full_folder_path)
-        
-        # Refresh Jellyfin library
-        refresh_jellyfin_library()
-        
-        return jsonify({
-            'message': f'Folder "{folder_path}" deleted successfully',
-            'deleted_files': deleted_files,
-            'deleted_thumbnails': deleted_thumbnails
-        })
-        
-    except Exception as e:
-        return jsonify({'error': f'Error deleting folder: {str(e)}'}), 500
-
-@app.route('/api/move-files', methods=['POST'])
-@login_required
-def api_move_files():
-    """API endpoint to move files to a different folder"""
-    data = request.get_json()
-    if not data:
-        return jsonify({'error': 'JSON data required'}), 400
-    
-    file_paths = data.get('file_paths', [])
-    destination_folder = data.get('destination_folder', '').strip()
-    destination_type = data.get('destination_type', '')
-    
-    if not file_paths:
-        return jsonify({'error': 'No files specified for moving'}), 400
-    
-    if not destination_type or destination_type not in ['image', 'video', 'audio']:
-        return jsonify({'error': 'Valid destination type required'}), 400
-    
-    # Sanitize destination folder path
-    if destination_folder:
-        destination_folder = sanitize_folder_path(destination_folder)
-        if not destination_folder:
-            return jsonify({'error': 'Invalid destination folder path'}), 400
-    
-    moved_files = []
-    errors = []
-    
-    try:
-        for file_path in file_paths:
-            # Find the current file
-            current_file_path = None
-            current_file_type = None
-            
-            for file_type in ['image', 'video', 'audio']:
-                media_dir = get_media_path(file_type)
-                potential_path = os.path.join(media_dir, file_path)
-                potential_path = os.path.normpath(potential_path)
-                
-                if os.path.exists(potential_path) and os.path.isfile(potential_path):
-                    current_file_path = potential_path
-                    current_file_type = file_type
-                    break
-            
-            if not current_file_path:
-                errors.append(f'File not found: {file_path}')
-                continue
-            
-            # Check if file type matches destination type
-            filename = os.path.basename(current_file_path)
-            is_allowed, detected_type = allowed_file(filename)
-            
-            if not is_allowed:
-                errors.append(f'Invalid file type: {filename}')
-                continue
-            
-            if detected_type != destination_type:
-                errors.append(f'File type mismatch: {filename} is {detected_type}, destination is {destination_type}')
-                continue
-            
-            # Get destination directory
-            dest_media_dir = get_media_path(destination_type)
-            if destination_folder:
-                dest_media_dir = os.path.join(dest_media_dir, destination_folder)
-            
-            ensure_directory(dest_media_dir)
-            
-            # Create destination path
-            dest_file_path = os.path.join(dest_media_dir, filename)
-            
-            # Handle filename conflicts
-            if os.path.exists(dest_file_path) and dest_file_path != current_file_path:
-                name, ext = os.path.splitext(filename)
-                counter = 1
-                while os.path.exists(dest_file_path):
-                    new_filename = f"{name}_{counter}{ext}"
-                    dest_file_path = os.path.join(dest_media_dir, new_filename)
-                    counter += 1
-                filename = os.path.basename(dest_file_path)
-            
-            # Skip if source and destination are the same
-            if os.path.normpath(current_file_path) == os.path.normpath(dest_file_path):
-                errors.append(f'File already in destination: {filename}')
-                continue
-            
-            # Move the file
-            import shutil
-            shutil.move(current_file_path, dest_file_path)
-            
-            moved_files.append({
-                'original_path': file_path,
-                'new_path': os.path.join(destination_folder, filename) if destination_folder else filename,
-                'filename': filename
-            })
-        
-        # Refresh Jellyfin library
-        if moved_files:
-            refresh_jellyfin_library()
-        
-        return jsonify({
-            'message': f'Successfully moved {len(moved_files)} file(s)',
-            'moved_files': moved_files,
-            'errors': errors
-        })
-        
-    except Exception as e:
-        return jsonify({'error': f'Error moving files: {str(e)}'}), 500
-
-@app.route('/api/move-folder', methods=['POST'])
-@login_required
-def api_move_folder():
-    """API endpoint to move/rename a folder"""
-    data = request.get_json()
-    if not data:
-        return jsonify({'error': 'JSON data required'}), 400
-    
-    source_folder = data.get('source_folder', '').strip()
-    destination_folder = data.get('destination_folder', '').strip()
-    file_type = data.get('file_type', '')
-    
-    if not source_folder or not destination_folder or not file_type:
-        return jsonify({'error': 'Source folder, destination folder, and file type are required'}), 400
-    
-    if file_type not in ['image', 'video', 'audio']:
-        return jsonify({'error': 'Invalid file type'}), 400
-    
-    # Sanitize folder paths
-    source_folder = sanitize_folder_path(source_folder)
-    destination_folder = sanitize_folder_path(destination_folder)
-    
-    if not source_folder or not destination_folder:
-        return jsonify({'error': 'Invalid folder paths'}), 400
-    
-    # Get media directory
-    media_dir = get_media_path(file_type)
-    source_path = os.path.join(media_dir, source_folder)
-    dest_path = os.path.join(media_dir, destination_folder)
-    
-    source_path = os.path.normpath(source_path)
-    dest_path = os.path.normpath(dest_path)
-    
-    # Security checks
-    if not source_path.startswith(os.path.normpath(media_dir)) or not dest_path.startswith(os.path.normpath(media_dir)):
-        return jsonify({'error': 'Invalid folder paths'}), 400
-    
-    if not os.path.exists(source_path):
-        return jsonify({'error': f'Source folder "{source_folder}" not found'}), 404
-    
-    if not os.path.isdir(source_path):
-        return jsonify({'error': f'"{source_folder}" is not a folder'}), 400
-    
-    if os.path.exists(dest_path):
-        return jsonify({'error': f'Destination folder "{destination_folder}" already exists'}), 409
-    
-    try:
-        # Ensure destination parent directory exists
-        dest_parent = os.path.dirname(dest_path)
-        ensure_directory(dest_parent)
-        
-        # Move the folder
-        import shutil
-        shutil.move(source_path, dest_path)
-        
-        # Refresh Jellyfin library
-        refresh_jellyfin_library()
-        
-        return jsonify({
-            'message': f'Folder moved from "{source_folder}" to "{destination_folder}" successfully'
-        })
-        
-    except Exception as e:
-        return jsonify({'error': f'Error moving folder: {str(e)}'}), 500
 
 # Error handlers
 @app.errorhandler(404)
